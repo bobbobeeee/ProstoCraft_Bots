@@ -1,6 +1,6 @@
 {
   "name": "autominerv2",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Desktop launcher and config studio for ProstoCraft mining bots",
   "main": "desktop/main.js",
   "scripts": {
@@ -63,12 +63,12 @@
       ]
     },
     "nsis": {
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "ProstoCraft.Bot.Studio-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
     "portable": {
-      "artifactName": "${productName}-Portable-${version}.${ext}"
+      "artifactName": "ProstoCraft.Bot.Studio-Portable-${version}.${ext}"
     }
   }
 }
