@@ -1,0 +1,14 @@
+{
+  "name": "prostocraft-bot-studio-mobile-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "main": "mobile-runtime.js",
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "mineflayer": "^4.34.0",
+    "mineflayer-physics": "^0.0.9",
+    "vec3": "^0.1.10"
+  }
+}
+

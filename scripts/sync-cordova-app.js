@@ -1,0 +1,154 @@
+const fs = require('fs')
+const path = require('path')
+
+const projectRoot = path.resolve(__dirname, '..')
+const cordovaRoot = path.join(projectRoot, 'mobile-cordova')
+const rendererSource = path.join(projectRoot, 'desktop', 'renderer')
+const rendererTarget = path.join(cordovaRoot, 'www')
+const platformRendererTarget = path.join(cordovaRoot, 'platforms', 'android', 'app', 'src', 'main', 'assets', 'www')
+const platformWwwSource = path.join(cordovaRoot, 'platforms', 'android', 'platform_www')
+const runtimeSource = path.join(projectRoot, 'mobile-cordova-src', 'nodejs-project')
+const runtimeTarget = path.join(rendererTarget, 'nodejs-project')
+const platformRuntimeTarget = path.join(platformRendererTarget, 'nodejs-project')
+const runtimeInstallSource = path.join(cordovaRoot, 'nodejs-project')
+const rootRuntimeFiles = ['bot.js', 'monitoring.js', 'config.json']
+const cordovaWebRuntimeFiles = ['cordova.js', 'cordova_plugins.js']
+
+function ensureProjectExists() {
+  if (!fs.existsSync(cordovaRoot)) {
+    throw new Error('Cordova project was not found. Create it first with the mobile setup command.')
+  }
+}
+
+function ensureDirectory(targetPath) {
+  fs.mkdirSync(targetPath, { recursive: true })
+}
+
+function removeRecursive(targetPath) {
+  const resolvedTargetPath = path.resolve(targetPath)
+  const allowedRoot = `${path.resolve(cordovaRoot)}${path.sep}`
+
+  if (!resolvedTargetPath.startsWith(allowedRoot)) {
+    throw new Error(`Refusing to remove path outside Cordova root: ${resolvedTargetPath}`)
+  }
+
+  fs.rmSync(resolvedTargetPath, { recursive: true, force: true })
+}
+
+function tryRemoveRecursive(targetPath) {
+  try {
+    if (fs.existsSync(targetPath)) {
+      removeRecursive(targetPath)
+    }
+  } catch (error) {
+    console.warn(`Skipping cleanup for ${targetPath}: ${error.message}`)
+  }
+}
+
+function copyRecursive(sourcePath, targetPath) {
+  const stats = fs.statSync(sourcePath)
+
+  if (stats.isDirectory()) {
+    ensureDirectory(targetPath)
+    for (const entry of fs.readdirSync(sourcePath)) {
+      copyRecursive(
+        path.join(sourcePath, entry),
+        path.join(targetPath, entry)
+      )
+    }
+    return
+  }
+
+  ensureDirectory(path.dirname(targetPath))
+  fs.copyFileSync(sourcePath, targetPath)
+}
+
+function resolveExistingPath(paths) {
+  return paths.find(candidatePath => fs.existsSync(candidatePath)) || null
+}
+
+function syncRuntimeDependencies() {
+  const runtimeModulesSource = resolveExistingPath([
+    path.join(runtimeSource, 'node_modules'),
+    path.join(runtimeInstallSource, 'node_modules')
+  ])
+  const runtimeLockfileSource = resolveExistingPath([
+    path.join(runtimeSource, 'package-lock.json'),
+    path.join(runtimeInstallSource, 'package-lock.json')
+  ])
+  const runtimeModulesTarget = path.join(runtimeTarget, 'node_modules')
+  const runtimeLockfileTarget = path.join(runtimeTarget, 'package-lock.json')
+
+  tryRemoveRecursive(runtimeModulesTarget)
+
+  if (runtimeModulesSource) {
+    copyRecursive(runtimeModulesSource, runtimeModulesTarget)
+  } else {
+    console.warn(
+      `Runtime node_modules were not found in ${runtimeSource} or ${runtimeInstallSource}. ` +
+      'Android runtime may fail to resolve packages until dependencies are installed.'
+    )
+  }
+
+  if (runtimeLockfileSource) {
+    fs.copyFileSync(runtimeLockfileSource, runtimeLockfileTarget)
+  }
+}
+
+function syncCordovaWebRuntime(targetRoot) {
+  if (!fs.existsSync(platformWwwSource)) {
+    return
+  }
+
+  for (const fileName of cordovaWebRuntimeFiles) {
+    const sourceFile = path.join(platformWwwSource, fileName)
+    if (fs.existsSync(sourceFile)) {
+      fs.copyFileSync(sourceFile, path.join(targetRoot, fileName))
+    }
+  }
+
+  const pluginsSource = path.join(platformWwwSource, 'plugins')
+  const pluginsTarget = path.join(targetRoot, 'plugins')
+
+  tryRemoveRecursive(pluginsTarget)
+
+  if (fs.existsSync(pluginsSource)) {
+    copyRecursive(pluginsSource, pluginsTarget)
+  }
+}
+
+function main() {
+  ensureProjectExists()
+
+  copyRecursive(rendererSource, rendererTarget)
+  ensureDirectory(runtimeTarget)
+  copyRecursive(runtimeSource, runtimeTarget)
+
+  for (const fileName of rootRuntimeFiles) {
+    fs.copyFileSync(
+      path.join(projectRoot, fileName),
+      path.join(runtimeTarget, fileName)
+    )
+  }
+
+  syncRuntimeDependencies()
+  syncCordovaWebRuntime(rendererTarget)
+
+  if (fs.existsSync(path.dirname(platformRendererTarget))) {
+    copyRecursive(rendererTarget, platformRendererTarget)
+    ensureDirectory(platformRuntimeTarget)
+
+    for (const fileName of rootRuntimeFiles) {
+      fs.copyFileSync(
+        path.join(projectRoot, fileName),
+        path.join(platformRuntimeTarget, fileName)
+      )
+    }
+
+    syncCordovaWebRuntime(platformRendererTarget)
+  }
+
+  console.log(`Synced Cordova app assets into ${cordovaRoot}`)
+}
+
+main()

@@ -1,0 +1,68 @@
+{
+  "name": "autominerv2",
+  "version": "1.0.0",
+  "description": "Desktop launcher and config studio for ProstoCraft mining bots",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:cli": "node bot.js",
+    "start:headless": "node bot.js --headless",
+    "android:sync": "node scripts/sync-android-assets.js",
+    "cordova:sync": "node scripts/sync-cordova-app.js",
+    "android:build:release": "node scripts/build-cordova-android-release.js",
+    "check": "node --check bot.js && node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/renderer/bridge.js && node --check desktop/renderer/app.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/check-source-hygiene.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && node scripts/check-source-hygiene.js",
+    "dist:win": "electron-builder --win nsis",
+    "dist:win:portable": "electron-builder --win portable",
+    "test": "node monitoring.test.js && npm run check"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/merrobocop/ProstoCraft_Bots.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/merrobocop/ProstoCraft_Bots/issues"
+  },
+  "homepage": "https://github.com/merrobocop/ProstoCraft_Bots#readme",
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "mineflayer": "^4.34.0",
+    "mineflayer-physics": "^0.0.9",
+    "vec3": "^0.1.10"
+  },
+  "devDependencies": {
+    "cordova": "^12.0.0",
+    "electron": "^37.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.prostocraft.botstudio",
+    "productName": "ProstoCraft Bot Studio",
+    "asar": true,
+    "compression": "normal",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.js",
+      "!*.test.js",
+      "config.json",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
