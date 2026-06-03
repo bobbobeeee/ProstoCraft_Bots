@@ -11,8 +11,10 @@
     "cordova:sync": "node scripts/sync-cordova-app.js",
     "android:build:release": "node scripts/build-cordova-android-release.js",
     "check": "node --check bot.js && node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/renderer/bridge.js && node --check desktop/renderer/app.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/check-source-hygiene.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && node scripts/check-source-hygiene.js",
-    "dist:win": "electron-builder --win nsis",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:win:installer": "electron-builder --win nsis",
     "dist:win:portable": "electron-builder --win portable",
+    "dist:win:release": "electron-builder --win nsis portable",
     "test": "node monitoring.test.js && npm run check"
   },
   "repository": {
@@ -56,13 +58,17 @@
     "win": {
       "signAndEditExecutable": false,
       "target": [
-        "nsis"
-      ],
-      "artifactName": "${productName}-${version}.${ext}"
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
     }
   }
 }

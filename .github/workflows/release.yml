@@ -1,0 +1,68 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer and portable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync generated app copies
+        shell: pwsh
+        run: |
+          npm run android:sync
+          npm run cordova:sync
+
+      - name: Test
+        run: npm test
+
+      - name: Build Windows files
+        run: npm run dist:win:release
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path dist -Filter *.exe | Sort-Object Name
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Path dist/SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProstoCraft-Bot-Studio-Windows
+          path: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+
