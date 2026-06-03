@@ -16,18 +16,18 @@ npm run dist:win:release
 
 GitHub Release создаётся автоматически, когда в репозиторий отправляется тег вида `v*`.
 
-Пример для версии `1.0.2`:
+Пример для версии `1.0.3`:
 
 ```powershell
 git status
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 GitHub Actions соберёт:
 
-- установщик `ProstoCraft.Bot.Studio-Setup-1.0.2.exe`;
-- portable `ProstoCraft.Bot.Studio-Portable-1.0.2.exe`;
+- установщик `ProstoCraft.Bot.Studio-Setup-1.0.3.exe`;
+- portable `ProstoCraft.Bot.Studio-Portable-1.0.3.exe`;
 - файл `SHA256SUMS.txt`.
 
 Готовый релиз появится здесь:

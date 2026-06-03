@@ -10,8 +10,8 @@ https://github.com/merrobocop/ProstoCraft_Bots/releases
 
 В релизе доступны два отдельных файла:
 
-- `ProstoCraft.Bot.Studio-Setup-1.0.2.exe` - установщик.
-- `ProstoCraft.Bot.Studio-Portable-1.0.2.exe` - portable-запуск без установки.
+- `ProstoCraft.Bot.Studio-Setup-1.0.3.exe` - установщик.
+- `ProstoCraft.Bot.Studio-Portable-1.0.3.exe` - portable-запуск без установки.
 
 ## Документация
 
@@ -86,8 +86,8 @@ npm run dist:win:portable
 Чтобы GitHub сам собрал и прикрепил файлы к Releases:
 
 ```powershell
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 Локальные логи, сборки, сертификаты, keystore-файлы и runtime-настройки не должны попадать в репозиторий.

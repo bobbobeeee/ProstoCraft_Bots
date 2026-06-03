@@ -473,6 +473,16 @@ const LIMBO_DETECTION_TIMEOUT_MS = Math.max(1500, Number(config.antibot.limboDet
 const LIMBO_COMPLETION_GRACE_MS = Math.max(0, Number(config.antibot.limboCompletionGraceMs ?? 900) || 900)
 const LIMBO_POST_FALL_JOIN_MS = Math.max(0, Number(config.antibot.limboPostFallJoinMs ?? 900) || 900)
 const LIMBO_MENU_WAIT_MS = Math.max(0, Number(config.antibot.limboMenuWaitMs ?? 12000) || 12000)
+const MENU_ATTEMPT_LIMIT = Math.max(3, Number(config.timing.menuAttemptLimit ?? 6) || 6)
+const MENU_RECOVERY_BASE_MS = Math.max(1000, Number(config.timing.menuRecoveryBaseMs ?? 3500) || 3500)
+const MENU_RECOVERY_STEP_MS = Math.max(0, Number(config.timing.menuRecoveryStepMs ?? 2500) || 2500)
+const MENU_RECOVERY_MAX_MS = Math.max(MENU_RECOVERY_BASE_MS, Number(config.timing.menuRecoveryMaxMs ?? 18000) || 18000)
+const MENU_RECOVERY_JITTER_MS = Math.max(0, Number(config.timing.menuRecoveryJitterMs ?? 2500) || 2500)
+const CLIENT_TIMEOUT_RECONNECT_MS = Math.max(3000, Number(config.timing.clientTimeoutReconnectMs ?? 6000) || 6000)
+const CLIENT_TIMEOUT_RECONNECT_JITTER_MS = Math.max(0, Number(config.timing.clientTimeoutReconnectJitterMs ?? 4000) || 4000)
+const MENU_ACTION_INTERVAL_MS = 350
+const MENU_WINDOW_TRANSITION_WAIT_MS = 2200
+const MENU_SUBSERVER_JOIN_WAIT_MS = 10000
 const GLOBAL_ERROR_THRESHOLD = config.globalRestart.errorThreshold
 const GLOBAL_ERROR_TIME_WINDOW = config.globalRestart.timeWindowMs
 const STOP_ON_NO_INTERNET = config.globalRestart.stopOnNoInternet
@@ -1170,11 +1180,17 @@ function createBot(cfg) {
   let positionCheckTimer = null, positionCheckStartTimer = null, preventiveRestartTimer = null
   let fallCheckTimer = null, limboFallIntervalTimer = null, limboFallTimeoutTimer = null
   let keepAliveTimer = null, fullServerRetryTimer = null
-  let postJoinStartTimer = null, recreateRetryTimer = null
+  let postJoinStartTimer = null, recreateRetryTimer = null, menuFlowWakeTimer = null
   let entryButtonWatchdogTimer = null
   let joinedSubserver = false, lastDigTime = 0
   let spawnGraceUntil = 0, backoff = RECONNECT_REGULAR
   let menuAttempts = 0, lastMenuAttempt = 0
+  let menuRecoveryCount = 0
+  let menuFlowRunning = false
+  let menuFlowQueued = false
+  let menuFlowWakeDueAt = 0
+  let menuStage = 'idle'
+  let menuStageStartedAt = Date.now()
   let isReturningToPosition = false
   let reconnectScheduled = false
   let reconnectDueAt = 0
@@ -1468,9 +1484,99 @@ function createBot(cfg) {
     return getMiningProgressAgeMs() <= windowMs
   }
 
+  function setMenuStage(stage, source = 'unknown') {
+    if (menuStage === stage) return
+    menuStage = stage
+    menuStageStartedAt = Date.now()
+    diagEvent('menu-stage', { stage, source })
+  }
+
+  function flattenMinecraftText(value) {
+    if (value == null) return ''
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          return flattenMinecraftText(JSON.parse(trimmed))
+        } catch (error) {
+          return value
+        }
+      }
+      return value
+    }
+
+    if (Array.isArray(value)) {
+      return value.map(flattenMinecraftText).filter(Boolean).join(' ')
+    }
+
+    if (typeof value === 'object') {
+      const parts = []
+      if (value.text) parts.push(flattenMinecraftText(value.text))
+      if (value.translate) parts.push(flattenMinecraftText(value.translate))
+      if (value.extra) parts.push(flattenMinecraftText(value.extra))
+      if (value.value && parts.length === 0) parts.push(flattenMinecraftText(value.value))
+      return parts.filter(Boolean).join(' ')
+    }
+
+    return String(value)
+  }
+
+  function getWindowTitleText(window) {
+    return flattenMinecraftText(window?.title || '')
+  }
+
+  function getItemDisplayText(item) {
+    const display = item?.nbt?.value?.display?.value
+    if (!display) return ''
+
+    const parts = []
+    if (display.Name) parts.push(flattenMinecraftText(display.Name.value ?? display.Name))
+    const lore = display.Lore?.value?.value || display.Lore?.value
+    if (Array.isArray(lore)) parts.push(flattenMinecraftText(lore))
+    return parts.filter(Boolean).join(' ')
+  }
+
+  function getWindowSlotText(window, slot) {
+    if (!window || !Array.isArray(window.slots)) return ''
+    return getItemDisplayText(window.slots[slot])
+  }
+
+  function classifyServerMenuWindow(window) {
+    if (!window) return { kind: 'none', title: '', slot1Text: '', slot2Text: '' }
+
+    const title = getWindowTitleText(window)
+    const lowTitle = title.toLowerCase()
+    const slot1Text = getWindowSlotText(window, MENU_SLOT_1)
+    const slot2Text = getWindowSlotText(window, MENU_SLOT_2)
+    const lowSlot1 = slot1Text.toLowerCase()
+    const lowSlot2 = slot2Text.toLowerCase()
+
+    if (lowTitle.includes('выбор игры') || lowTitle.includes('game')) {
+      return { kind: 'game', title, slot1Text, slot2Text }
+    }
+
+    if (lowTitle.includes('выбор скайблока') || lowTitle.includes('skyblock')) {
+      return { kind: 'skyblock', title, slot1Text, slot2Text }
+    }
+
+    if (lowSlot2.includes('второй скайблок') || lowSlot2.includes('second skyblock')) {
+      return { kind: 'skyblock', title, slot1Text, slot2Text }
+    }
+
+    if (lowSlot1.includes('скайблок') || lowSlot1.includes('skyblock')) {
+      return { kind: 'game', title, slot1Text, slot2Text }
+    }
+
+    return { kind: 'unknown', title, slot1Text, slot2Text }
+  }
+
   function beginSubserverJoin() {
     joinedSubserver = true
     subserverJoinSeq += 1
+    menuRecoveryCount = 0
+    setMenuStage('joined', 'subserver-join')
     positionConfirmed = false
     entryButtonPressedThisJoin = false
     entryButtonPressedJoinSeq = 0
@@ -2435,6 +2541,9 @@ function createBot(cfg) {
     lastReactiveBreakAt = 0
     lastPositionDiagnosticAt = 0
     lastMenuOpenAttemptAt = 0
+    lastMenuAttempt = 0
+    menuFlowQueued = false
+    setMenuStage('idle', 'reset-session')
     packetOnlyStartedAt = 0
     breakPacketSecondWindowStartedAt = 0
     breakPacketSecondWindowCount = 0
@@ -2471,6 +2580,7 @@ function createBot(cfg) {
     try { if (postJoinStartTimer) clearTimeout(postJoinStartTimer) } catch(e){}
     try { if (entryButtonWatchdogTimer) clearTimeout(entryButtonWatchdogTimer) } catch(e){}
     try { if (recreateRetryTimer) clearTimeout(recreateRetryTimer) } catch(e){}
+    try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch(e){}
     try { restoreLimboPhysics('cleanup') } catch(e){}
     menuTimer = null
     reconnectTimer = null
@@ -2486,6 +2596,10 @@ function createBot(cfg) {
     postJoinStartTimer = null
     entryButtonWatchdogTimer = null
     recreateRetryTimer = null
+    menuFlowWakeTimer = null
+    menuFlowWakeDueAt = 0
+    menuFlowRunning = false
+    menuFlowQueued = false
     entryButtonFlowRunning = false
     reconnectScheduled = false
     reconnectDueAt = 0
@@ -3377,6 +3491,45 @@ function createBot(cfg) {
     scheduleReconnectLocal(delay, true, reason)
   }
 
+  function getMenuRecoveryDelay() {
+    menuRecoveryCount += 1
+    const rampMs = Math.min(
+      MENU_RECOVERY_MAX_MS - MENU_RECOVERY_BASE_MS,
+      Math.max(0, menuRecoveryCount - 1) * MENU_RECOVERY_STEP_MS
+    )
+    return MENU_RECOVERY_BASE_MS + rampMs + Math.floor(Math.random() * MENU_RECOVERY_JITTER_MS)
+  }
+
+  function scheduleMenuRecovery(reason = 'menu-attempt-limit') {
+    const delay = getMenuRecoveryDelay()
+    const currentWindow = bot?.currentWindow
+      ? {
+          id: bot.currentWindow.id,
+          type: bot.currentWindow.type,
+          title: String(bot.currentWindow.title || '').slice(0, 160)
+        }
+      : null
+
+    addLog(
+      'warning',
+      username,
+      `Вход завис в лобби (${menuAttempts}/${MENU_ATTEMPT_LIMIT}) - быстрый перезаход через ${Math.round(delay / 1000)}с`
+    )
+    diagEvent('menu-fast-recovery', {
+      reason,
+      delay,
+      menuAttempts,
+      menuRecoveryCount,
+      currentWindow
+    })
+
+    menuAttempts = 0
+    lastMenuAttempt = 0
+    lastMenuOpenAttemptAt = 0
+    updateBotStatus(username, 'ожидание')
+    rescheduleReconnectLocal(delay, reason)
+  }
+
   function handleTooManyPacketsNotice(source, rawText = '') {
     activatePacketSafetyMode(source)
     diagEvent('too-many-packets-notice', {
@@ -3564,17 +3717,23 @@ function createBot(cfg) {
     bot.on('respawn', () => diagEvent('bot-respawn', {}))
     bot.on('death', () => diagEvent('bot-death', {}))
     bot.on('health', () => diagEvent('bot-health', { health: bot.health, food: bot.food, oxygen: bot.oxygenLevel }))
-    bot.on('windowOpen', window => diagEvent('window-open', {
-      id: window?.id,
-      type: window?.type,
-      title: String(window?.title || '').slice(0, 160),
-      slotCount: window?.slots?.length
-    }))
-    bot.on('windowClose', window => diagEvent('window-close', {
-      id: window?.id,
-      type: window?.type,
-      title: String(window?.title || '').slice(0, 160)
-    }))
+    bot.on('windowOpen', window => {
+      diagEvent('window-open', {
+        id: window?.id,
+        type: window?.type,
+        title: getWindowTitleText(window).slice(0, 160),
+        slotCount: window?.slots?.length
+      })
+      queueMenuFlow('window-open', 80)
+    })
+    bot.on('windowClose', window => {
+      diagEvent('window-close', {
+        id: window?.id,
+        type: window?.type,
+        title: getWindowTitleText(window).slice(0, 160)
+      })
+      queueMenuFlow('window-close', 250)
+    })
     bot.on('forcedMove', () => diagEvent('bot-forced-move', {}))
     
     bot.once('spawn', async () => {
@@ -3587,6 +3746,7 @@ function createBot(cfg) {
       spawnGraceUntil = Date.now() + GRACE_AFTER_SPAWN
       
       menuAttempts = 0
+      setMenuStage('spawn', 'bot-spawn')
       
       if (bot._client && bot._client.socket) {
         bot._client.socket.on('error', error => {
@@ -3610,7 +3770,7 @@ function createBot(cfg) {
       const limboReadyForMenu = await waitForLimboBeforeMenu(spawnSessionEpoch)
       if (!isCurrentSession(spawnSessionEpoch) || !bot || joinedSubserver || !limboReadyForMenu) return
       
-      await openServerMenuItem('spawn-flow', { minIntervalMs: 0, countAttempt: false })
+      await driveMenuFlow('spawn-flow', { countAttempt: false })
       backoff = RECONNECT_REGULAR
     })
 
@@ -3685,30 +3845,149 @@ function createBot(cfg) {
       return writeClientPacket('use_item', { hand: 0 }, `${source}:use-item`)
     }
 
-    async function tryOpenMenuOnce(ignoreAttemptLimit = false) {
-      if (!bot || joinedSubserver) return
-      if (waitingForFall && !fallCheckPassed) {
-        diagEvent('menu-open-skipped-limbo', { waitingForFall, fallCheckPassed })
-        return
-      }
-      if (!ignoreAttemptLimit && !retryingFullServer && menuAttempts >= 6) {
-        backoff = 60000 + Math.floor(Math.random() * 120000)
-        diagEvent('menu-attempt-limit', { menuAttempts, backoff })
-        scheduleReconnectLocal(backoff, true, 'menu-attempt-limit')
+    function queueMenuFlow(source = 'queued', delayMs = 0) {
+      if (joinedSubserver || retryingFullServer || shuttingDown || !runtimeEnabled) return
+
+      const dueAt = Date.now() + Math.max(0, delayMs)
+      if (menuFlowWakeTimer && menuFlowWakeDueAt <= dueAt) {
         return
       }
 
-      if (!bot.currentWindow) {
-        await openServerMenuItem('menu-loop', { countAttempt: !ignoreAttemptLimit })
-        return
+      try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch (error) {}
+      menuFlowWakeDueAt = dueAt
+      menuFlowWakeTimer = setTimeout(() => {
+        menuFlowWakeTimer = null
+        menuFlowWakeDueAt = 0
+        driveMenuFlow(source).catch(() => {})
+      }, Math.max(0, delayMs))
+    }
+
+    async function driveMenuFlow(source = 'menu-loop', options = {}) {
+      if (!bot || joinedSubserver) return false
+      if (retryingFullServer && !options.allowDuringFullServerRetry) return false
+      if (waitingForFall && !fallCheckPassed) {
+        diagEvent('menu-open-skipped-limbo', { source, waitingForFall, fallCheckPassed })
+        return false
       }
-      
-      safeClickWindow(MENU_SLOT_1, { countAttempt: !ignoreAttemptLimit })
-      
-      const humanClickDelay = 800 + Math.floor(Math.random() * 700)
-      await sleep(humanClickDelay)
-      
-      safeClickWindow(MENU_SLOT_2, { countAttempt: !ignoreAttemptLimit })
+
+      if (menuFlowRunning) {
+        menuFlowQueued = true
+        diagEvent('menu-flow-queued', { source, menuStage })
+        return false
+      }
+
+      menuFlowRunning = true
+      menuFlowQueued = false
+
+      try {
+        const {
+          ignoreAttemptLimit = false,
+          countAttempt = true,
+          allowDuringFullServerRetry = false
+        } = options
+        const forceProgress = allowDuringFullServerRetry === true
+
+        if (!ignoreAttemptLimit && !retryingFullServer && menuAttempts >= MENU_ATTEMPT_LIMIT) {
+          diagEvent('menu-attempt-limit', { menuAttempts, menuRecoveryCount, menuStage })
+          scheduleMenuRecovery('menu-attempt-limit')
+          return false
+        }
+
+        const now = Date.now()
+        const stageAgeMs = now - menuStageStartedAt
+
+        if (!bot.currentWindow) {
+          if (!forceProgress && menuStage === 'game-clicked' && stageAgeMs < MENU_WINDOW_TRANSITION_WAIT_MS) {
+            queueMenuFlow('wait-skyblock-window', 300)
+            return false
+          }
+
+          if (!forceProgress && menuStage === 'skyblock-clicked' && stageAgeMs < MENU_SUBSERVER_JOIN_WAIT_MS) {
+            queueMenuFlow('wait-subserver-teleport', 700)
+            return false
+          }
+
+          setMenuStage('opening-game-menu', source)
+          const opened = await openServerMenuItem(source, {
+            countAttempt,
+            minIntervalMs: MENU_ACTION_INTERVAL_MS
+          })
+          if (opened) queueMenuFlow('after-menu-open', 300)
+          return opened
+        }
+
+        const menuInfo = classifyServerMenuWindow(bot.currentWindow)
+        diagEvent('menu-flow-window', {
+          source,
+          menuStage,
+          kind: menuInfo.kind,
+          title: menuInfo.title,
+          slot1Text: menuInfo.slot1Text.slice(0, 160),
+          slot2Text: menuInfo.slot2Text.slice(0, 160)
+        })
+
+        if (menuInfo.kind === 'game') {
+          if (!forceProgress && menuStage === 'game-clicked' && stageAgeMs < MENU_WINDOW_TRANSITION_WAIT_MS) {
+            queueMenuFlow('wait-after-game-click', 300)
+            return false
+          }
+
+          const clicked = safeClickWindow(MENU_SLOT_1, {
+            countAttempt,
+            minIntervalMs: MENU_ACTION_INTERVAL_MS
+          })
+          if (clicked) {
+            setMenuStage('game-clicked', source)
+            queueMenuFlow('after-game-click', 350)
+          }
+          return clicked
+        }
+
+        if (menuInfo.kind === 'skyblock') {
+          if (!forceProgress && menuStage === 'skyblock-clicked' && stageAgeMs < MENU_SUBSERVER_JOIN_WAIT_MS) {
+            queueMenuFlow('wait-after-skyblock-click', 700)
+            return false
+          }
+
+          const clicked = safeClickWindow(MENU_SLOT_2, {
+            countAttempt,
+            minIntervalMs: MENU_ACTION_INTERVAL_MS
+          })
+          if (clicked) {
+            setMenuStage('skyblock-clicked', source)
+            queueMenuFlow('after-skyblock-click', 900)
+          }
+          return clicked
+        }
+
+        if (countAttempt) menuAttempts += 1
+        diagEvent('menu-window-unknown', {
+          source,
+          menuAttempts,
+          title: menuInfo.title,
+          slot1Text: menuInfo.slot1Text.slice(0, 160),
+          slot2Text: menuInfo.slot2Text.slice(0, 160)
+        })
+
+        try {
+          if (bot.currentWindow) bot.closeWindow(bot.currentWindow)
+        } catch (error) {
+          diagEvent('menu-window-close-error', { source, error })
+        }
+        setMenuStage('unknown-window', source)
+        queueMenuFlow('unknown-window-retry', 700)
+        return false
+      } finally {
+        menuFlowRunning = false
+        if (menuFlowQueued) {
+          menuFlowQueued = false
+          queueMenuFlow('queued-menu-flow', 50)
+        }
+      }
+    }
+
+    async function tryOpenMenuOnce(ignoreAttemptLimit = false) {
+      return driveMenuFlow('menu-loop', { ignoreAttemptLimit })
     }
 
     function stopFullServerRetry() {
@@ -3721,20 +4000,11 @@ function createBot(cfg) {
 
     async function tryFullServerRetryOnce() {
       if (!retryingFullServer || joinedSubserver || !bot) return
-      
-      if (bot.currentWindow) {
-        safeClickWindow(MENU_SLOT_2, { countAttempt: false, minIntervalMs: 900 })
-        return
-      }
-
-      if (!await openServerMenuItem('full-server-retry', { countAttempt: false, minIntervalMs: 900 })) {
-        return
-      }
-      
-      await sleep(350)
-      
-      if (!bot.currentWindow || joinedSubserver) return
-      await tryOpenMenuOnce(true)
+      await driveMenuFlow('full-server-retry', {
+        ignoreAttemptLimit: true,
+        countAttempt: false,
+        allowDuringFullServerRetry: true
+      })
     }
 
     function startFullServerRetry() {
@@ -3742,6 +4012,9 @@ function createBot(cfg) {
       
       retryingFullServer = true
       menuAttempts = 0
+      lastMenuAttempt = 0
+      lastMenuOpenAttemptAt = 0
+      setMenuStage('full-server-retry', 'server-full')
       addLog('warning', username, '! sb02 заполнен - повторяю вход каждую секунду')
       
       const retryLoop = async () => {
@@ -3761,7 +4034,7 @@ function createBot(cfg) {
       if (!joinedSubserver && !retryingFullServer && (!waitingForFall || fallCheckPassed)) {
         tryOpenMenuOnce().catch(()=>{})
       }
-      const nextAttempt = 3000 + Math.floor(Math.random()*2000)
+      const nextAttempt = 1000 + Math.floor(Math.random()*750)
       menuTimer = setTimeout(menuLoop, nextAttempt)
     })()
 
@@ -3978,7 +4251,7 @@ function createBot(cfg) {
       
       if (msg.includes('client timed out after')) {
         addLog('warning', username, '! Клиент таймаут')
-        backoff = 20000 + Math.floor(Math.random() * 20000)
+        backoff = CLIENT_TIMEOUT_RECONNECT_MS + Math.floor(Math.random() * CLIENT_TIMEOUT_RECONNECT_JITTER_MS)
         scheduleReconnectLocal(backoff, true, 'error-client-timeout')
         return
       }
