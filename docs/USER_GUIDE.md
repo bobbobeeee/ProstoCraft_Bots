@@ -12,8 +12,8 @@ https://github.com/merrobocop/ProstoCraft_Bots/releases
 
 Скачай один из файлов:
 
-- `ProstoCraft Bot Studio-Setup-1.0.0.exe` - если нужна обычная установка.
-- `ProstoCraft Bot Studio-Portable-1.0.0.exe` - если нужно запустить без установки.
+- `ProstoCraft Bot Studio-Setup-1.0.1.exe` - если нужна обычная установка.
+- `ProstoCraft Bot Studio-Portable-1.0.1.exe` - если нужно запустить без установки.
 
 ## Первый запуск
 
@@ -50,4 +50,3 @@ C:\Users\Ilya\AppData\Roaming\autominerv2\runtime\bot.log
 ```
 
 Это примерно `732 блока/мин`.
-

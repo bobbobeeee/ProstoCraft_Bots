@@ -1,4 +1,4 @@
-# ProstoCraft Bot Studio 1.0.0
+# ProstoCraft Bot Studio 1.0.1
 
 Текущий релиз содержит локальную рабочую версию бота, которую нужно хранить на GitHub как основную.
 
@@ -13,12 +13,11 @@
 
 ## Что скачать
 
-- `ProstoCraft Bot Studio-Setup-1.0.0.exe` - обычный установщик Windows.
-- `ProstoCraft Bot Studio-Portable-1.0.0.exe` - запуск без установки.
+- `ProstoCraft Bot Studio-Setup-1.0.1.exe` - обычный установщик Windows.
+- `ProstoCraft Bot Studio-Portable-1.0.1.exe` - запуск без установки.
 - `SHA256SUMS.txt` - контрольные суммы файлов.
 
 ## Проверка перед публикацией
 
 - `npm test`
 - `npm run dist:win:release`
-
