@@ -63,6 +63,12 @@ npm run check
 npm run dist:win
 ```
 
+Релизная сборка для GitHub без автопубликации electron-builder:
+
+```powershell
+npm run dist:win:release
+```
+
 Собрать только установщик:
 
 ```powershell

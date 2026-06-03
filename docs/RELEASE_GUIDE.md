@@ -34,9 +34,10 @@ GitHub Actions соберёт:
 
 https://github.com/merrobocop/ProstoCraft_Bots/releases
 
+В workflow `electron-builder` запускается с `--publish never`, а загрузку файлов в GitHub Release делает отдельный шаг `softprops/action-gh-release`.
+
 ## Если нужно обновить релиз
 
 1. Удали старый тег на GitHub или создай новый тег, например `v1.0.1`.
 2. Обнови `CHANGELOG.md` и `RELEASE_NOTES.md`.
 3. Запушь новый тег.
-

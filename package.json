@@ -14,7 +14,7 @@
     "dist:win": "electron-builder --win nsis portable",
     "dist:win:installer": "electron-builder --win nsis",
     "dist:win:portable": "electron-builder --win portable",
-    "dist:win:release": "electron-builder --win nsis portable",
+    "dist:win:release": "electron-builder --win nsis portable --publish never",
     "test": "node monitoring.test.js && npm run check"
   },
   "repository": {
