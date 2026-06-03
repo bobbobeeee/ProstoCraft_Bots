@@ -27,12 +27,12 @@
       burstBreakRepeats: 2,
       burstBreakReach: 5.1,
       burstLookRefreshMs: 2000,
-      breakPacketTargetCooldownMs: 8,
-      breakPacketPendingRetryMs: 16,
-      breakPacketMinTargetCooldownMs: 6,
-      breakPacketMaxPerSecond: 360,
+      breakPacketTargetCooldownMs: 12,
+      breakPacketPendingRetryMs: 32,
+      breakPacketMinTargetCooldownMs: 8,
+      breakPacketMaxPerSecond: 300,
       breakPacketBurstWindowMs: 250,
-      breakPacketBurstLimit: 108,
+      breakPacketBurstLimit: 84,
       breakPacketSafeMaxPerSecond: 150,
       breakPacketSafeBurstLimit: 40,
       breakPacketSafeModeMs: 900000,
@@ -87,11 +87,7 @@
     menu: {
       slot1: 10,
       slot2: 13,
-      hotbarSlot: 0,
-      hotbarSlotsToTry: [0, 1, 2, 3, 4, 5, 6, 7, 8],
-      openAttemptLimit: 14,
-      directJoinCommand: '/server sb02',
-      directJoinAfterMenuAttempts: 6
+      hotbarSlot: 0
     },
     globalRestart: {
       errorThreshold: 15,
@@ -115,9 +111,7 @@
     },
     monitor: {
       historyLength: 180,
-      cpuRamHistoryLength: 60,
-      lowSpeedLogThresholdPerMin: 700,
-      lowSpeedLogIntervalMs: 60000
+      cpuRamHistoryLength: 60
     },
     maintenance: {
       cleanupIntervalMs: 3600000,

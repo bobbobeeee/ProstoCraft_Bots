@@ -155,24 +155,20 @@ function normalizeRuntimeConfig(config) {
     merged.timing.burstBreakRepeats = defaults.timing?.burstBreakRepeats ?? 2
   }
 
-  if ([25, 12, 10].includes(merged.timing?.breakPacketTargetCooldownMs)) {
-    merged.timing.breakPacketTargetCooldownMs = defaults.timing?.breakPacketTargetCooldownMs ?? 8
+  if ([25, 10].includes(merged.timing?.breakPacketTargetCooldownMs)) {
+    merged.timing.breakPacketTargetCooldownMs = defaults.timing?.breakPacketTargetCooldownMs ?? 12
   }
 
-  if (merged.timing?.breakPacketPendingRetryMs === 32) {
-    merged.timing.breakPacketPendingRetryMs = defaults.timing?.breakPacketPendingRetryMs ?? 16
+  if ([75, 45, 20].includes(merged.timing?.breakPacketMinTargetCooldownMs)) {
+    merged.timing.breakPacketMinTargetCooldownMs = defaults.timing?.breakPacketMinTargetCooldownMs ?? 8
   }
 
-  if ([75, 45, 20, 8].includes(merged.timing?.breakPacketMinTargetCooldownMs)) {
-    merged.timing.breakPacketMinTargetCooldownMs = defaults.timing?.breakPacketMinTargetCooldownMs ?? 6
+  if ([72, 108, 160, 240].includes(merged.timing?.breakPacketMaxPerSecond)) {
+    merged.timing.breakPacketMaxPerSecond = defaults.timing?.breakPacketMaxPerSecond ?? 300
   }
 
-  if ([72, 108, 160, 240, 300].includes(merged.timing?.breakPacketMaxPerSecond)) {
-    merged.timing.breakPacketMaxPerSecond = defaults.timing?.breakPacketMaxPerSecond ?? 360
-  }
-
-  if ([18, 28, 42, 64, 84].includes(merged.timing?.breakPacketBurstLimit)) {
-    merged.timing.breakPacketBurstLimit = defaults.timing?.breakPacketBurstLimit ?? 108
+  if ([18, 28, 42, 64].includes(merged.timing?.breakPacketBurstLimit)) {
+    merged.timing.breakPacketBurstLimit = defaults.timing?.breakPacketBurstLimit ?? 84
   }
 
   if ([42, 60, 96, 120].includes(merged.timing?.breakPacketSafeMaxPerSecond)) {

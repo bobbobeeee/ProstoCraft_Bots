@@ -353,27 +353,6 @@ const PASSWORD = config.server.password
 const MENU_SLOT_1 = config.menu.slot1
 const MENU_SLOT_2 = config.menu.slot2
 const HOTBAR_SLOT = config.menu.hotbarSlot
-const HOTBAR_SLOTS_TO_TRY = (() => {
-  const configured = Array.isArray(config.menu?.hotbarSlotsToTry)
-    ? config.menu.hotbarSlotsToTry
-    : [HOTBAR_SLOT, 1, 2, 3, 4, 5, 6, 7, 8]
-  const slots = []
-  for (const slot of configured) {
-    const numericSlot = Number(slot)
-    if (Number.isInteger(numericSlot) && numericSlot >= 0 && numericSlot <= 8 && !slots.includes(numericSlot)) {
-      slots.push(numericSlot)
-    }
-  }
-  if (!slots.includes(HOTBAR_SLOT) && Number.isInteger(Number(HOTBAR_SLOT))) {
-    slots.unshift(Number(HOTBAR_SLOT))
-  }
-  return slots.length ? slots : [0]
-})()
-const MENU_OPEN_ATTEMPT_LIMIT = Math.max(6, Number(config.menu?.openAttemptLimit ?? 14) || 14)
-const DIRECT_JOIN_COMMAND = typeof config.menu?.directJoinCommand === 'string'
-  ? config.menu.directJoinCommand.trim()
-  : ''
-const DIRECT_JOIN_AFTER_MENU_ATTEMPTS = Math.max(0, Number(config.menu?.directJoinAfterMenuAttempts ?? 6) || 6)
 const DEBUG_MODE = config.logging?.debugMode === true
 const DETAILED_EVENT_LOGGING = DEBUG_MODE
 const LOG_SERVER_MESSAGES = DEBUG_MODE && config.logging?.logServerMessages !== false
@@ -405,12 +384,12 @@ const BURST_BREAK_INTERVAL_MS = Math.max(1, Number([5, 20].includes(config.timin
 const BURST_BREAK_REPEATS = Math.max(1, Number(config.timing.burstBreakRepeats === 3 ? 2 : (config.timing.burstBreakRepeats ?? 2)) || 2)
 const BURST_BREAK_REACH = Math.max(1, Number(config.timing.burstBreakReach ?? 5.1) || 5.1)
 const BURST_LOOK_REFRESH_MS = Math.max(0, Number(config.timing.burstLookRefreshMs ?? 2000) || 2000)
-const BREAK_PACKET_TARGET_COOLDOWN_MS = Math.max(0, Number([25, 12, 10].includes(config.timing.breakPacketTargetCooldownMs) ? 8 : (config.timing.breakPacketTargetCooldownMs ?? 8)) || 8)
-const BREAK_PACKET_PENDING_RETRY_MS = Math.max(0, Number(config.timing.breakPacketPendingRetryMs === 32 ? 16 : (config.timing.breakPacketPendingRetryMs ?? 16)) || 16)
-const BREAK_PACKET_MIN_TARGET_COOLDOWN_MS = Math.max(0, Number([75, 45, 20, 8].includes(config.timing.breakPacketMinTargetCooldownMs) ? 6 : (config.timing.breakPacketMinTargetCooldownMs ?? 6)) || 6)
-const BREAK_PACKET_MAX_PER_SECOND = Math.max(2, Number([72, 108, 160, 240, 300].includes(config.timing.breakPacketMaxPerSecond) ? 360 : (config.timing.breakPacketMaxPerSecond ?? 360)) || 360)
+const BREAK_PACKET_TARGET_COOLDOWN_MS = Math.max(0, Number([25, 10].includes(config.timing.breakPacketTargetCooldownMs) ? 12 : (config.timing.breakPacketTargetCooldownMs ?? 12)) || 12)
+const BREAK_PACKET_PENDING_RETRY_MS = Math.max(0, Number(config.timing.breakPacketPendingRetryMs ?? 32) || 32)
+const BREAK_PACKET_MIN_TARGET_COOLDOWN_MS = Math.max(0, Number([75, 45, 20].includes(config.timing.breakPacketMinTargetCooldownMs) ? 8 : (config.timing.breakPacketMinTargetCooldownMs ?? 8)) || 8)
+const BREAK_PACKET_MAX_PER_SECOND = Math.max(2, Number([72, 108, 160, 240].includes(config.timing.breakPacketMaxPerSecond) ? 300 : (config.timing.breakPacketMaxPerSecond ?? 300)) || 300)
 const BREAK_PACKET_BURST_WINDOW_MS = Math.max(50, Number(config.timing.breakPacketBurstWindowMs ?? 250) || 250)
-const BREAK_PACKET_BURST_LIMIT = Math.max(2, Number([18, 28, 42, 64, 84].includes(config.timing.breakPacketBurstLimit) ? 108 : (config.timing.breakPacketBurstLimit ?? 108)) || 108)
+const BREAK_PACKET_BURST_LIMIT = Math.max(2, Number([18, 28, 42, 64].includes(config.timing.breakPacketBurstLimit) ? 84 : (config.timing.breakPacketBurstLimit ?? 84)) || 84)
 const BREAK_PACKET_SAFE_MAX_PER_SECOND = Math.max(2, Number([42, 60, 96, 120].includes(config.timing.breakPacketSafeMaxPerSecond) ? 150 : (config.timing.breakPacketSafeMaxPerSecond ?? 150)) || 150)
 const BREAK_PACKET_SAFE_BURST_LIMIT = Math.max(2, Number([10, 15, 24, 32].includes(config.timing.breakPacketSafeBurstLimit) ? 40 : (config.timing.breakPacketSafeBurstLimit ?? 40)) || 40)
 const BREAK_PACKET_SAFE_MODE_MS = Math.max(60000, Number(config.timing.breakPacketSafeModeMs ?? 900000) || 900000)
@@ -532,8 +511,6 @@ const ENABLE_SOFT_RESTART = config.features?.enableSoftRestart !== false
 const ENABLE_AGGRESSIVE_MINING = config.features?.enableAggressiveMining !== false
 const ENABLE_PERIODIC_ROTATION = config.features?.enablePeriodicRotation === true
 const SPEED_WINDOW_MS = Math.max(1000, config.monitor?.speedWindowMs || 10000)
-const LOW_SPEED_LOG_THRESHOLD_PER_MIN = Math.max(0, Number(config.monitor?.lowSpeedLogThresholdPerMin ?? 700) || 700)
-const LOW_SPEED_LOG_INTERVAL_MS = Math.max(30000, Number(config.monitor?.lowSpeedLogIntervalMs ?? 60000) || 60000)
 const HEADLESS_MODE = process.argv.includes('--headless') ||
   process.env.BOT_HEADLESS === '1' ||
   !process.stdout.isTTY ||
@@ -1231,8 +1208,6 @@ function createBot(cfg) {
   let lastPositionDiagnosticAt = 0
   let lastMenuOpenAttemptAt = 0
   let lastLoginCommandAt = 0
-  let menuHotbarCursor = 0
-  let directJoinAttemptedThisSession = false
   let diagnosticEventSeq = 0
   let openServerMenuItem = async (source = 'uninitialized') => {
     diagEvent('menu-open-unavailable', { source })
@@ -1244,83 +1219,9 @@ function createBot(cfg) {
   let breakPacketBurstWindowStartedAt = 0
   let breakPacketBurstWindowCount = 0
   let lastBreakPacketThrottleLogAt = 0
-  let lastLowSpeedMiningLogAt = 0
-  let packetMinerStats = createPacketMinerStats()
   const lastBreakPacketByTarget = new Map()
   const pendingPacketBreaks = new Map()
   const lastCountedBlockByTarget = new Map()
-
-  function createPacketMinerStats() {
-    return {
-      startedAt: Date.now(),
-      snapshotSamples: 0,
-      mineableTargets: 0,
-      transientTargets: 0,
-      emptyTargets: 0,
-      unloadedTargets: 0,
-      unreachableTargets: 0,
-      packetAttempts: 0,
-      sentTargets: 0,
-      sentPairs: 0,
-      deniedBudget: 0,
-      deniedCooldown: 0,
-      deniedPending: 0,
-      noBlock: 0,
-      outOfReach: 0,
-      fastPasses: 0,
-      fallbackPasses: 0,
-      vanillaDigs: 0,
-      noMineablePasses: 0
-    }
-  }
-
-  function resetPacketMinerStats() {
-    packetMinerStats = createPacketMinerStats()
-  }
-
-  function noteMiningSnapshotStats(snapshot) {
-    if (!snapshot) return
-    packetMinerStats.snapshotSamples++
-    packetMinerStats.mineableTargets += snapshot.mineable?.length || 0
-    packetMinerStats.transientTargets += snapshot.transient?.length || 0
-    packetMinerStats.emptyTargets += snapshot.empty?.length || 0
-    packetMinerStats.unloadedTargets += snapshot.unloaded?.length || 0
-    packetMinerStats.unreachableTargets += snapshot.unreachable?.length || 0
-  }
-
-  function averageStat(total) {
-    if (!packetMinerStats.snapshotSamples) return '0.0'
-    return (total / packetMinerStats.snapshotSamples).toFixed(1)
-  }
-
-  function maybeLogLowSpeedMiningStats(source = 'loop') {
-    if (LOW_SPEED_LOG_THRESHOLD_PER_MIN <= 0) return
-
-    const now = Date.now()
-    if (now - packetMinerStats.startedAt < 60000) return
-    if (now - lastLowSpeedMiningLogAt < LOW_SPEED_LOG_INTERVAL_MS) return
-
-    refreshBotRates(now)
-    const botData = monitorData.bots[username]
-    const ratePerMinute = botData?.blocksLastMinute || 0
-    if (ratePerMinute >= LOW_SPEED_LOG_THRESHOLD_PER_MIN) return
-
-    lastLowSpeedMiningLogAt = now
-    const limits = getBreakPacketLimits()
-    addLog(
-      'warning',
-      username,
-      `Низкая скорость ${formatBlocksPerMinute(ratePerMinute)} (${source}): ` +
-        `packets ${packetMinerStats.sentTargets}/${packetMinerStats.packetAttempts}, pairs=${packetMinerStats.sentPairs}, ` +
-        `deny budget=${packetMinerStats.deniedBudget}, cooldown=${packetMinerStats.deniedCooldown}, pending=${packetMinerStats.deniedPending}, ` +
-        `noBlock=${packetMinerStats.noBlock}, reach=${packetMinerStats.outOfReach}, ` +
-        `avg цели m=${averageStat(packetMinerStats.mineableTargets)}, t=${averageStat(packetMinerStats.transientTargets)}, ` +
-        `air=${averageStat(packetMinerStats.emptyTargets)}, unld=${averageStat(packetMinerStats.unloadedTargets)}, ` +
-        `vanilla=${packetMinerStats.vanillaDigs}, fallback=${packetMinerStats.fallbackPasses}, ` +
-        `limit=${limits.perSecond}/${limits.burst}${limits.safeMode ? '/safe' : ''}`
-    )
-    resetPacketMinerStats()
-  }
 
   function getPositionKey(position) {
     if (!position) return ''
@@ -1697,19 +1598,16 @@ function createBot(cfg) {
       return false
     }
 
-    packetMinerStats.packetAttempts++
     const preemptive = options.preemptive ?? PREEMPTIVE_BREAK_TARGETS
     const repeats = getEffectiveBreakPacketRepeats(options.repeats ?? BURST_BREAK_REPEATS)
     const block = target.block || bot.blockAt(target.position)
     if ((!block || block.type === 0) && !preemptive) {
-      packetMinerStats.noBlock++
       return false
     }
 
     const location = block?.position || target.position
     const distance = Number.isFinite(target.distance) ? target.distance : getPositionDistance(location)
     if (!Number.isFinite(distance) || distance > BURST_BREAK_REACH) {
-      packetMinerStats.outOfReach++
       return false
     }
 
@@ -1718,13 +1616,11 @@ function createBot(cfg) {
       Math.max(0, Number(options.cooldownMs ?? BREAK_PACKET_TARGET_COOLDOWN_MS) || 0)
     )
     if (!options.skipCooldown && !canSendBreakPacketForTarget(location, cooldownMs)) {
-      packetMinerStats.deniedCooldown++
       return false
     }
 
     const pendingRetryMs = Math.max(0, Number(options.pendingRetryMs ?? BREAK_PACKET_PENDING_RETRY_MS) || 0)
     if (!options.skipPendingRetry && !canRetryPendingBreak(location, pendingRetryMs)) {
-      packetMinerStats.deniedPending++
       return false
     }
 
@@ -1733,10 +1629,7 @@ function createBot(cfg) {
     try {
       let sentPairs = 0
       for (let i = 0; i < repeats; i++) {
-        if (!reserveBreakPacketBudget(2)) {
-          packetMinerStats.deniedBudget++
-          break
-        }
+        if (!reserveBreakPacketBudget(2)) break
         bot._client.write('block_dig', { status: 0, location, face })
         bot._client.write('block_dig', { status: 2, location, face })
         sentPairs++
@@ -1747,8 +1640,6 @@ function createBot(cfg) {
       }
       markBreakPacketTargetSent(location)
       markPacketBreakAttempt(location)
-      packetMinerStats.sentTargets++
-      packetMinerStats.sentPairs += sentPairs
       return true
     } catch (error) {
       return false
@@ -2544,16 +2435,12 @@ function createBot(cfg) {
     lastReactiveBreakAt = 0
     lastPositionDiagnosticAt = 0
     lastMenuOpenAttemptAt = 0
-    menuHotbarCursor = 0
-    directJoinAttemptedThisSession = false
     packetOnlyStartedAt = 0
     breakPacketSecondWindowStartedAt = 0
     breakPacketSecondWindowCount = 0
     breakPacketBurstWindowStartedAt = 0
     breakPacketBurstWindowCount = 0
     lastBreakPacketThrottleLogAt = 0
-    lastLowSpeedMiningLogAt = 0
-    resetPacketMinerStats()
     lastBreakPacketByTarget.clear()
     pendingPacketBreaks.clear()
     lastCountedBlockByTarget.clear()
@@ -3564,35 +3451,6 @@ function createBot(cfg) {
     }
   }
 
-  function getNextMenuHotbarSlot(preferredSlot) {
-    const numericPreferred = Number(preferredSlot)
-    if (Number.isInteger(numericPreferred) && numericPreferred >= 0 && numericPreferred <= 8) {
-      return numericPreferred
-    }
-
-    const slot = HOTBAR_SLOTS_TO_TRY[menuHotbarCursor % HOTBAR_SLOTS_TO_TRY.length]
-    menuHotbarCursor = (menuHotbarCursor + 1) % HOTBAR_SLOTS_TO_TRY.length
-    return slot
-  }
-
-  function tryDirectJoinCommand(source = 'menu-fallback') {
-    if (!DIRECT_JOIN_COMMAND || directJoinAttemptedThisSession || joinedSubserver || !bot) {
-      return false
-    }
-
-    directJoinAttemptedThisSession = true
-    try {
-      addLog('info', username, `Пробую прямой вход: ${DIRECT_JOIN_COMMAND}`)
-      diagEvent('direct-join-command', { source, command: DIRECT_JOIN_COMMAND })
-      bot.chat(DIRECT_JOIN_COMMAND)
-      return true
-    } catch (error) {
-      diagEvent('direct-join-command-error', { source, command: DIRECT_JOIN_COMMAND, error })
-      return false
-    }
-  }
-
-
   function startClient() {
     const botOptions = {
       host: SERVER_HOST,
@@ -3811,13 +3669,11 @@ function createBot(cfg) {
         menuAttempts++
       }
 
-      const hotbarSlot = getNextMenuHotbarSlot(options.hotbarSlot)
-
-      try { bot.setQuickBarSlot(hotbarSlot) } catch (error) {
+      try { bot.setQuickBarSlot(HOTBAR_SLOT) } catch (error) {
         diagEvent('menu-open-set-slot-error', { source, error })
       }
 
-      writeClientPacket('held_item_slot', { slotId: hotbarSlot }, `${source}:slot`)
+      writeClientPacket('held_item_slot', { slotId: HOTBAR_SLOT }, `${source}:slot`)
 
       const thinkingDelay = Number(options.delayMs)
       if (Number.isFinite(thinkingDelay) && thinkingDelay > 0) {
@@ -3825,7 +3681,7 @@ function createBot(cfg) {
       }
       if (!bot || joinedSubserver || bot.currentWindow) return Boolean(bot?.currentWindow)
 
-      diagEvent('menu-open-use-item', { source, hotbarSlot, slotsToTry: HOTBAR_SLOTS_TO_TRY })
+      diagEvent('menu-open-use-item', { source, hotbarSlot: HOTBAR_SLOT })
       return writeClientPacket('use_item', { hand: 0 }, `${source}:use-item`)
     }
 
@@ -3835,31 +3691,9 @@ function createBot(cfg) {
         diagEvent('menu-open-skipped-limbo', { waitingForFall, fallCheckPassed })
         return
       }
-      if (hasReconnectPendingLocal()) {
-        diagEvent('menu-open-skipped-reconnect-pending', {
-          reconnectDueInMs: reconnectDueAt ? Math.max(0, reconnectDueAt - Date.now()) : 0
-        })
-        return
-      }
-      if (
-        !ignoreAttemptLimit &&
-        !retryingFullServer &&
-        DIRECT_JOIN_COMMAND &&
-        !directJoinAttemptedThisSession &&
-        menuAttempts >= DIRECT_JOIN_AFTER_MENU_ATTEMPTS
-      ) {
-        tryDirectJoinCommand('menu-attempts')
-        return
-      }
-      if (!ignoreAttemptLimit && !retryingFullServer && menuAttempts >= MENU_OPEN_ATTEMPT_LIMIT) {
-        backoff = 5000 + Math.floor(Math.random() * 3000)
-        diagEvent('menu-attempt-limit', {
-          menuAttempts,
-          backoff,
-          limit: MENU_OPEN_ATTEMPT_LIMIT,
-          hotbarSlotsToTry: HOTBAR_SLOTS_TO_TRY,
-          directJoinAttemptedThisSession
-        })
+      if (!ignoreAttemptLimit && !retryingFullServer && menuAttempts >= 6) {
+        backoff = 60000 + Math.floor(Math.random() * 120000)
+        diagEvent('menu-attempt-limit', { menuAttempts, backoff })
         scheduleReconnectLocal(backoff, true, 'menu-attempt-limit')
         return
       }
@@ -4276,14 +4110,11 @@ function createBot(cfg) {
             return
           }
 
-          maybeLogLowSpeedMiningStats('health')
         }
 
         const snapshot = buildMiningSnapshot(cursor)
-        noteMiningSnapshotStats(snapshot)
 
         if (!snapshot.mineable.length) {
-          packetMinerStats.noMineablePasses++
           const recovered = snapshot.transient.length > 0
             ? await recoverTransientMiningTargets(expectedSessionEpoch, snapshot)
             : snapshot.unreachable.length > 0
@@ -4313,7 +4144,6 @@ function createBot(cfg) {
             }
           }
           if (fastPacketsThisPass > 0) {
-            packetMinerStats.fastPasses++
             lastDigTime = Date.now()
             try { bot.swingArm() } catch (error) {}
             await sleep(FAST_DIG_RETRY_MS)
@@ -4330,7 +4160,6 @@ function createBot(cfg) {
 
               packetOnlyStartedAt = packetNow
               packetOnlyFallbackThisPass = true
-              packetMinerStats.fallbackPasses++
             }
           }
         }
@@ -4369,7 +4198,6 @@ function createBot(cfg) {
 
             recordMinedBlock(freshTarget.position, 'dig')
             minedThisPass++
-            packetMinerStats.vanillaDigs++
 
             if (DIG_DELAY > 0) {
               await sleep(DIG_DELAY)
