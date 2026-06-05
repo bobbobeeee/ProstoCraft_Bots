@@ -6,10 +6,12 @@ const path = require('path')
 const PRODUCT_NAME = 'ProstoCraft Bot Studio'
 const RUNTIME_DIRNAME = 'runtime'
 const MAX_RECENT_LOGS = 300
+const MAX_RECENT_CHAT_LOGS = 500
 const BOT_EVENT_PREFIX = '@@BOT_EVENT@@'
 const DESKTOP_SETTINGS_FILE = 'desktop-settings.json'
 const DEFAULT_DESKTOP_SETTINGS = {
   launchOnStartup: false,
+  autoStartBotsOnLaunch: false,
   startMinimized: false,
   minimizeToTray: false,
   closeToTray: false
@@ -46,7 +48,8 @@ const runtimeState = {
     currentRatePerSecond: 0,
     bots: {}
   },
-  logs: []
+  logs: [],
+  chatLogs: []
 }
 
 function getAppRoot() {
@@ -79,6 +82,14 @@ function getRuntimeLogPath() {
 
 function getBackendEntryPath() {
   return path.join(getAppRoot(), 'bot.js')
+}
+
+function getAppIconPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'build', 'icon.ico')
+  }
+
+  return path.join(getAppRoot(), 'build', 'icon.ico')
 }
 
 function readJson(filePath) {
@@ -227,6 +238,18 @@ function normalizeRuntimeConfig(config) {
     merged.timing.movingPistonWaitMs = defaults.timing?.movingPistonWaitMs ?? 1
   }
 
+  if (!Number.isFinite(Number(merged.timing?.minBlocksPerMin)) || Number(merged.timing.minBlocksPerMin) <= 20) {
+    merged.timing.minBlocksPerMin = defaults.timing?.minBlocksPerMin ?? 350
+  }
+
+  if (!Number.isFinite(Number(merged.timing?.speedGuardMinBlocksPerMin)) || Number(merged.timing.speedGuardMinBlocksPerMin) <= 20) {
+    merged.timing.speedGuardMinBlocksPerMin = defaults.timing?.speedGuardMinBlocksPerMin ?? 350
+  }
+
+  if (!Number.isFinite(Number(merged.timing?.speedGuardTargetRatio))) {
+    merged.timing.speedGuardTargetRatio = defaults.timing?.speedGuardTargetRatio ?? 0.82
+  }
+
   if (merged.log?.maxSizeBytes === 10485760) {
     merged.log.maxSizeBytes = defaults.log?.maxSizeBytes ?? 52428800
   }
@@ -251,9 +274,21 @@ function normalizeRuntimeConfig(config) {
     merged.logging = {}
   }
 
+  if (!merged.features || typeof merged.features !== 'object') {
+    merged.features = {}
+  }
+  merged.features.enableSpeedGuard = merged.features.enableSpeedGuard !== false
+
   merged.logging.debugMode = merged.logging.debugMode === true
   merged.logging.detailedEvents = merged.logging.debugMode
   merged.logging.logServerMessages = merged.logging.debugMode
+  if (merged.logging.diagnosticMaxValueLength === 3000) {
+    merged.logging.diagnosticMaxValueLength = defaults.logging?.diagnosticMaxValueLength ?? 1400
+  }
+  if (!Number.isFinite(Number(merged.logging.diagnosticRepeatSummaryMs))) {
+    merged.logging.diagnosticRepeatSummaryMs = defaults.logging?.diagnosticRepeatSummaryMs ?? 30000
+  }
+  merged.logging.diagnosticFullPacketDetails = merged.logging.diagnosticFullPacketDetails === true
 
   return merged
 }
@@ -304,15 +339,8 @@ function applyDesktopSettings(settings = readDesktopSettings()) {
 }
 
 function createTrayIcon() {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-      <rect x="6" y="6" width="52" height="52" rx="16" fill="#0f1c2b"/>
-      <rect x="12" y="12" width="40" height="40" rx="12" fill="#ff8859"/>
-      <path d="M21 21h12c7 0 11 3 11 9 0 3-2 6-5 7 4 1 6 4 6 8 0 7-5 10-13 10H21V21zm10 13c3 0 5-1 5-4s-2-4-5-4h-3v8h3zm1 15c4 0 6-2 6-5s-2-5-6-5h-4v10h4z" fill="#09111b"/>
-    </svg>
-  `
-
-  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
+  const icon = nativeImage.createFromPath(getAppIconPath())
+  return icon.isEmpty() ? nativeImage.createEmpty() : icon
 }
 
 function ensureTray(settings = readDesktopSettings()) {
@@ -451,6 +479,25 @@ function pushLog(entry) {
   runtimeState.logs = [...runtimeState.logs, entry].slice(-MAX_RECENT_LOGS)
 }
 
+function pushChatLog(entry) {
+  const now = new Date()
+  const message = String(entry?.message ?? entry?.rawMessage ?? '').trim()
+  if (!message) return
+
+  const normalizedEntry = {
+    ...entry,
+    botName: entry?.botName || 'SERVER',
+    source: entry?.source || 'chat',
+    position: entry?.position || 'unknown',
+    message,
+    rawMessage: entry?.rawMessage ?? message,
+    time: entry?.time || now.toLocaleTimeString('ru-RU'),
+    timestamp: entry?.timestamp || now.toISOString()
+  }
+
+  runtimeState.chatLogs = [...(runtimeState.chatLogs || []), normalizedEntry].slice(-MAX_RECENT_CHAT_LOGS)
+}
+
 function buildRuntimePayload() {
   return {
     ...runtimeState,
@@ -487,6 +534,8 @@ function handleRuntimeEvent(eventType, payload) {
 
   if (eventType === 'log') {
     pushLog(payload)
+  } else if (eventType === 'chat') {
+    pushChatLog(payload)
   } else if (eventType === 'resources') {
     runtimeState.resources = {
       cpuPercent: payload.cpuPercent || 0,
@@ -575,6 +624,7 @@ function startRuntime() {
 
   runtimeState.status = 'starting'
   runtimeState.logs = []
+  runtimeState.chatLogs = []
   stdoutBuffer = ''
   stderrBuffer = ''
   publishRuntimeState()
@@ -634,6 +684,21 @@ function restartRuntime() {
   return stopRuntime()
 }
 
+function scheduleAutoStartRuntime(desktopSettings) {
+  if (!desktopSettings?.autoStartBotsOnLaunch) return
+
+  setTimeout(() => {
+    if (runtimeChild || isQuitting) return
+    pushLog({
+      level: 'info',
+      botName: 'SYSTEM',
+      message: 'Автозапуск ботов при входе в программу',
+      rawMessage: 'Автозапуск ботов при входе в программу'
+    })
+    startRuntime()
+  }, 1200)
+}
+
 async function importConfigFromDialog() {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Импорт конфигурации',
@@ -690,6 +755,7 @@ function createWindow() {
     minWidth,
     minHeight,
     title: PRODUCT_NAME,
+    icon: getAppIconPath(),
     backgroundColor: '#07101a',
     autoHideMenuBar: true,
     show: !shouldStartMinimized,
@@ -801,6 +867,7 @@ app.whenReady().then(() => {
   applyDesktopSettings()
   registerIpcHandlers()
   createWindow()
+  scheduleAutoStartRuntime(readDesktopSettings())
 })
 
 app.on('before-quit', () => {

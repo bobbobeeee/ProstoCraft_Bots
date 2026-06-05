@@ -356,8 +356,10 @@ const HOTBAR_SLOT = config.menu.hotbarSlot
 const DEBUG_MODE = config.logging?.debugMode === true
 const DETAILED_EVENT_LOGGING = DEBUG_MODE
 const LOG_SERVER_MESSAGES = DEBUG_MODE && config.logging?.logServerMessages !== false
-const DIAGNOSTIC_MAX_VALUE_LENGTH = Math.max(500, Number(config.logging?.diagnosticMaxValueLength ?? 3000) || 3000)
+const DIAGNOSTIC_MAX_VALUE_LENGTH = Math.max(500, Number(config.logging?.diagnosticMaxValueLength ?? 1400) || 1400)
 const DIAGNOSTIC_POSITION_INTERVAL_MS = Math.max(5000, Number(config.logging?.diagnosticPositionIntervalMs ?? 30000) || 30000)
+const DIAGNOSTIC_REPEAT_SUMMARY_MS = Math.max(5000, Number(config.logging?.diagnosticRepeatSummaryMs ?? 30000) || 30000)
+const DIAGNOSTIC_FULL_PACKET_DETAILS = config.logging?.diagnosticFullPacketDetails === true
 const MOBILE_SNAPSHOT_INTERVAL_MS = 4000
 const MOBILE_RESOURCE_INTERVAL_MS = 5000
 const MOBILE_PAUSE_CHECK_INTERVAL_MS = 4000
@@ -454,6 +456,11 @@ const ANTIBOT_MIN_INTERVAL = config.antibot.minInterval
 const ANTIBOT_MAX_INTERVAL = config.antibot.maxInterval
 const ANTIBOT_SHORT_MOVE_MS = config.antibot.shortMoveMs
 const ANTIBOT_FALL_CHECK_ENABLED = config.antibot.fallCheckEnabled
+const FEATURE_ACTIVE_FALL_CHECK_ENABLED = config.features?.enableActiveFallCheck !== false
+const ACTIVE_FALL_CHECK_ENABLED = Boolean(
+  ANTIBOT_FALL_CHECK_ENABLED &&
+  FEATURE_ACTIVE_FALL_CHECK_ENABLED
+)
 const ANTIBOT_FALL_CHECK_TIMEOUT = config.antibot.fallCheckTimeout
 const configuredLimboFallTicks = Number(config.antibot.limboFallTicks)
 const configuredLimboFallPacketMs = Number(config.antibot.limboFallPacketMs)
@@ -511,6 +518,7 @@ const PAUSE_FILE_PATH = path.resolve(CONFIG_DIR, config.pause?.file || 'pause.tx
 const PAUSE_CHECK_INTERVAL = MOBILE_RUNTIME_PROFILE
   ? Math.max(Number(config.pause?.checkInterval) || 1000, MOBILE_PAUSE_CHECK_INTERVAL_MS)
   : (Number(config.pause?.checkInterval) || 1000)
+const CHAT_CAPTCHA_RECONNECT_MS = 10 * 60 * 1000
 const MEMORY_LIMIT_MB = config.globalRestart?.memoryLimitMB || 0
 const OFFLINE_WATCHDOG_MS = Math.max(30000, Number(config.maintenance?.offlineWatchdogMs ?? 90000) || 90000)
 const OFFLINE_WATCHDOG_INTERVAL_MS = Math.max(10000, Number(config.maintenance?.offlineWatchdogIntervalMs ?? 30000) || 30000)
@@ -521,6 +529,20 @@ const ENABLE_SOFT_RESTART = config.features?.enableSoftRestart !== false
 const ENABLE_AGGRESSIVE_MINING = config.features?.enableAggressiveMining !== false
 const ENABLE_PERIODIC_ROTATION = config.features?.enablePeriodicRotation === true
 const SPEED_WINDOW_MS = Math.max(1000, config.monitor?.speedWindowMs || 10000)
+const rawSpeedGuardFloor = Number(config.timing?.speedGuardMinBlocksPerMin ?? config.timing?.minBlocksPerMin)
+const SPEED_GUARD_ENABLED = config.features?.enableSpeedGuard !== false
+const SPEED_GUARD_INTERVAL_MS = Math.max(1000, Number(config.timing?.speedGuardIntervalMs ?? 5000) || 5000)
+const SPEED_GUARD_START_GRACE_MS = Math.max(15000, Number(config.timing?.speedGuardStartGraceMs ?? 45000) || 45000)
+const SPEED_GUARD_LOW_RATE_MS = Math.max(SPEED_GUARD_INTERVAL_MS, Number(config.timing?.speedGuardLowRateMs ?? 25000) || 25000)
+const SPEED_GUARD_RECOVERY_COOLDOWN_MS = Math.max(5000, Number(config.timing?.speedGuardRecoveryCooldownMs ?? 15000) || 15000)
+const SPEED_GUARD_TARGET_RATIO = Math.min(0.95, Math.max(0.5, Number(config.timing?.speedGuardTargetRatio ?? 0.82) || 0.82))
+const SPEED_GUARD_MIN_BLOCKS_PER_MIN = Number.isFinite(rawSpeedGuardFloor) && rawSpeedGuardFloor > 20
+  ? rawSpeedGuardFloor
+  : 350
+const SPEED_GUARD_MIN_LEARN_RATE = Math.max(120, Number(config.timing?.speedGuardMinLearnRate ?? 450) || 450)
+const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
+const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
+const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(1, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
 const HEADLESS_MODE = process.argv.includes('--headless') ||
   process.env.BOT_HEADLESS === '1' ||
   !process.stdout.isTTY ||
@@ -586,6 +608,7 @@ const monitorData = {
 }
 const stabilityCooldowns = new Map()
 const packetSafetyCooldowns = new Map()
+const speedGuardPeakRates = new Map()
 monitorData.scriptResources = {
   cpu: [],
   ram: [],
@@ -785,6 +808,65 @@ function addLog(level, botName, message) {
   writeToLogFile(fileMessage)
 }
 
+function normalizeServerMessagePosition(position) {
+  if (position === 0) return 'chat'
+  if (position === 1) return 'system'
+  if (position === 2) return 'game_info'
+  if (typeof position === 'string' && position.trim()) {
+    const normalized = position.trim().toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === '0' || normalized === 'chat') return 'chat'
+    if (normalized === '1' || normalized === 'system') return 'system'
+    if (
+      normalized === '2' ||
+      normalized === 'game_info' ||
+      normalized === 'gameinfo' ||
+      normalized === 'action_bar' ||
+      normalized === 'actionbar'
+    ) {
+      return 'game_info'
+    }
+    return normalized
+  }
+  return 'unknown'
+}
+
+function getServerMessageSource(position) {
+  return `server-${normalizeServerMessagePosition(position).replace(/_/g, '-')}`
+}
+
+function isVisibleServerMessagePosition(position) {
+  const normalized = normalizeServerMessagePosition(position)
+  return normalized === 'chat' || normalized === 'system' || normalized === 'unknown'
+}
+
+function normalizeChatText(text) {
+  return String(text ?? '')
+    .replace(/\u00a7[0-9A-FK-OR]/gi, '')
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u0000/g, '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+}
+
+function addChatLog(botName, message, source = 'server-message', details = {}) {
+  const text = normalizeChatText(message)
+  if (!text) return
+
+  const now = new Date()
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+
+  emitRuntimeEvent('chat', {
+    botName,
+    source,
+    position: details.position,
+    sender: details.sender,
+    message: text,
+    rawMessage: message,
+    time,
+    timestamp: now.toISOString()
+  })
+}
+
 function updateBotStatus(botName, status, data = {}) {
   if (!monitorData.bots[botName]) {
     monitorData.bots[botName] = {
@@ -851,6 +933,96 @@ function normalizeDiagnosticValue(value, seen = new WeakSet()) {
   }
 
   return value
+}
+
+function shortenDiagnosticText(value, maxLength = 300) {
+  const text = String(value ?? '')
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function summarizeDiagnosticPacket(eventName, packet) {
+  if (DIAGNOSTIC_FULL_PACKET_DETAILS || !packet || typeof packet !== 'object') {
+    return packet
+  }
+
+  if (eventName === 'client-packet:login' || eventName === 'client-packet:respawn') {
+    return {
+      entityId: packet.entityId,
+      gameMode: packet.gameMode,
+      previousGameMode: packet.previousGameMode,
+      worldName: packet.worldName,
+      worldNamesCount: Array.isArray(packet.worldNames) ? packet.worldNames.length : undefined,
+      dimension: typeof packet.dimension === 'string' ? packet.dimension : undefined,
+      hashedSeed: packet.hashedSeed,
+      maxPlayers: packet.maxPlayers,
+      reducedDebugInfo: packet.reducedDebugInfo,
+      enableRespawnScreen: packet.enableRespawnScreen
+    }
+  }
+
+  if (eventName === 'client-packet:position' || eventName === 'client-write:position') {
+    return {
+      x: Number.isFinite(Number(packet.x)) ? Number(Number(packet.x).toFixed(3)) : packet.x,
+      y: Number.isFinite(Number(packet.y)) ? Number(Number(packet.y).toFixed(3)) : packet.y,
+      z: Number.isFinite(Number(packet.z)) ? Number(Number(packet.z).toFixed(3)) : packet.z,
+      yaw: packet.yaw,
+      pitch: packet.pitch,
+      flags: packet.flags,
+      teleportId: packet.teleportId ?? packet.teleportID ?? packet.teleport_id,
+      onGround: packet.onGround
+    }
+  }
+
+  if (eventName === 'client-packet:kick_disconnect' || eventName === 'client-packet:disconnect') {
+    return { reason: shortenDiagnosticText(packet.reason, 500) }
+  }
+
+  if (eventName === 'client-packet:open_window') {
+    return {
+      windowId: packet.windowId,
+      inventoryType: packet.inventoryType,
+      windowTitle: shortenDiagnosticText(packet.windowTitle ?? packet.title, 160),
+      slotCount: packet.slotCount
+    }
+  }
+
+  return packet
+}
+
+function summarizeServerMessageJson(json) {
+  if (DIAGNOSTIC_FULL_PACKET_DETAILS || !json || typeof json !== 'object') {
+    return json
+  }
+
+  return {
+    text: shortenDiagnosticText(json.text, 240),
+    color: json.color,
+    extraCount: Array.isArray(json.extra) ? json.extra.length : undefined
+  }
+}
+
+function summarizeDiagnosticDetails(eventName, details = {}) {
+  if (!details || typeof details !== 'object') return details
+  const summarized = { ...details }
+
+  if (Object.prototype.hasOwnProperty.call(summarized, 'packet')) {
+    summarized.packet = summarizeDiagnosticPacket(eventName, summarized.packet)
+  }
+
+  if (eventName.startsWith('client-write:') && Object.prototype.hasOwnProperty.call(summarized, 'payload')) {
+    summarized.payload = summarizeDiagnosticPacket(eventName, summarized.payload)
+  }
+
+  if (eventName === 'server-message') {
+    summarized.text = shortenDiagnosticText(summarized.text, 500)
+    summarized.json = summarizeServerMessageJson(summarized.json)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(summarized, 'error')) {
+    summarized.error = normalizeDiagnosticValue(summarized.error)
+  }
+
+  return summarized
 }
 
 function stringifyDiagnostic(details = {}) {
@@ -1178,7 +1350,8 @@ function createBot(cfg) {
   let bot = null
   let menuTimer = null, reconnectTimer = null, reconnectGraceTimer = null
   let positionCheckTimer = null, positionCheckStartTimer = null, preventiveRestartTimer = null
-  let fallCheckTimer = null, limboFallIntervalTimer = null, limboFallTimeoutTimer = null
+  let speedGuardTimer = null
+  let fallCheckTimer = null, limboFallStartTimer = null, limboFallIntervalTimer = null, limboFallTimeoutTimer = null
   let keepAliveTimer = null, fullServerRetryTimer = null
   let postJoinStartTimer = null, recreateRetryTimer = null, menuFlowWakeTimer = null
   let entryButtonWatchdogTimer = null
@@ -1202,6 +1375,10 @@ function createBot(cfg) {
   let authQuickLogin = false
   let retryingFullServer = false
   let isOnline = false
+  let scannerHoldUntil = 0
+  let lastScannerLogAt = 0
+  let scannerWaitChallengeActive = false
+  let lastLimboPositionPacket = null
   let isRotating = false
   let lastKeepAlive = Date.now()
   let botHandle = null
@@ -1225,11 +1402,17 @@ function createBot(cfg) {
   let lastMenuOpenAttemptAt = 0
   let lastLoginCommandAt = 0
   let diagnosticEventSeq = 0
+  const diagnosticRepeatState = new Map()
   let openServerMenuItem = async (source = 'uninitialized') => {
     diagEvent('menu-open-unavailable', { source })
     return false
   }
   let packetOnlyStartedAt = 0
+  let speedGuardStartedAt = 0
+  let speedGuardLowSince = 0
+  let speedGuardLastRecoveryAt = 0
+  let speedGuardRecoveries = 0
+  let speedGuardCheckRunning = false
   let breakPacketSecondWindowStartedAt = 0
   let breakPacketSecondWindowCount = 0
   let breakPacketBurstWindowStartedAt = 0
@@ -1484,6 +1667,215 @@ function createBot(cfg) {
     return getMiningProgressAgeMs() <= windowMs
   }
 
+  function getCurrentRatePerMinute() {
+    refreshBotRates()
+    const botData = monitorData.bots[username]
+    if (!botData) return 0
+
+    const shortWindowRate = (Number(botData.blocksPerSecond) || 0) * 60
+    return Number.isFinite(shortWindowRate) ? shortWindowRate : 0
+  }
+
+  function getSpeedGuardPeak() {
+    return Math.max(0, Number(speedGuardPeakRates.get(username)) || 0)
+  }
+
+  function rememberSpeedGuardPeak(ratePerMinute) {
+    if (!Number.isFinite(ratePerMinute) || ratePerMinute < SPEED_GUARD_MIN_LEARN_RATE) {
+      return getSpeedGuardPeak()
+    }
+
+    const currentPeak = getSpeedGuardPeak()
+    if (ratePerMinute > currentPeak) {
+      speedGuardPeakRates.set(username, ratePerMinute)
+      return ratePerMinute
+    }
+
+    return currentPeak
+  }
+
+  function getSpeedGuardTarget() {
+    const learnedTarget = getSpeedGuardPeak() * SPEED_GUARD_TARGET_RATIO
+    return Math.max(SPEED_GUARD_MIN_BLOCKS_PER_MIN, learnedTarget)
+  }
+
+  function resetSpeedGuardLowState() {
+    speedGuardLowSince = 0
+    speedGuardRecoveries = 0
+  }
+
+  function stopSpeedGuard() {
+    try { if (speedGuardTimer) clearInterval(speedGuardTimer) } catch (error) {}
+    speedGuardTimer = null
+    speedGuardCheckRunning = false
+    speedGuardStartedAt = 0
+    speedGuardLowSince = 0
+    speedGuardRecoveries = 0
+  }
+
+  async function recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot) {
+    const now = Date.now()
+    if (now - speedGuardLastRecoveryAt < SPEED_GUARD_RECOVERY_COOLDOWN_MS) return
+
+    speedGuardLastRecoveryAt = now
+    speedGuardRecoveries += 1
+
+    const idleFor = getMiningProgressAgeMs(now)
+    const emptyTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'empty')
+    const unloadedTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
+    const rateText = `${Math.round(currentRate)}<${Math.round(targetRate)} б/м`
+
+    addLog(
+      'warning',
+      username,
+      `Speed-guard: просадка ${rateText}, простой ${Number.isFinite(idleFor) ? Math.round(idleFor / 1000) : '?'}с -> восстановление ${speedGuardRecoveries}/${SPEED_GUARD_RECONNECT_AFTER_RECOVERIES}`
+    )
+
+    diagEvent('speed-guard-recovery', {
+      currentRate,
+      targetRate,
+      peakRate: getSpeedGuardPeak(),
+      idleFor,
+      recoveries: speedGuardRecoveries,
+      emptyTargets,
+      unloadedTargets,
+      targets: snapshot?.all?.map(formatTargetSnapshot)
+    })
+
+    if (unloadedTargets && Number.isFinite(idleFor) && idleFor >= SPEED_GUARD_BUTTON_IDLE_MS) {
+      const confirmed = await confirmFarCoordinateState(expectedSessionEpoch, 'speed-guard-unloaded')
+      if (confirmed.confirmed) {
+        reconnectBecauseCoordinateFar(confirmed.health, 'speed-guard-unloaded')
+        return
+      }
+    }
+
+    if (
+      entryButtonPosition &&
+      emptyTargets &&
+      Number.isFinite(idleFor) &&
+      idleFor >= SPEED_GUARD_BUTTON_IDLE_MS &&
+      !entryButtonFlowRunning
+    ) {
+      addLog('warning', username, 'Speed-guard: шахта пустая, повторяю кнопку генератора')
+      await pressEntryButton({ waitAfter: false })
+      if (!isMiningSessionReady(expectedSessionEpoch)) return
+      await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 900))
+      return
+    }
+
+    packetOnlyStartedAt = 0
+    pendingPacketBreaks.clear()
+    lastBreakPacketByTarget.clear()
+
+    if (!digLoopRunning && isEntryButtonPressedForCurrentJoin()) {
+      addLog('warning', username, 'Speed-guard: mining loop не активен, запускаю заново')
+      startDiggingLoop(expectedSessionEpoch).catch(() => {})
+      return
+    }
+
+    await ensureMiningLookAt(true)
+    if (!isMiningSessionReady(expectedSessionEpoch)) return
+
+    const burstPackets = await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 900))
+    if (burstPackets > 0) {
+      return
+    }
+
+    if (
+      speedGuardRecoveries >= SPEED_GUARD_RECONNECT_AFTER_RECOVERIES ||
+      (Number.isFinite(idleFor) && idleFor >= SPEED_GUARD_NO_PROGRESS_RECONNECT_MS)
+    ) {
+      addLog('warning', username, 'Speed-guard: мягкое восстановление не помогло -> быстрый перезаход')
+      updateBotStatus(username, 'ожидание')
+      scheduleReconnectLocal(2000, true, 'speed-guard-low-rate')
+    }
+  }
+
+  async function runSpeedGuardCheck(expectedSessionEpoch) {
+    if (
+      !SPEED_GUARD_ENABLED ||
+      speedGuardCheckRunning ||
+      diggingPaused ||
+      isReturningToPosition ||
+      !isCurrentSession(expectedSessionEpoch) ||
+      !joinedSubserver ||
+      !bot ||
+      hasReconnectPendingLocal()
+    ) {
+      return
+    }
+
+    speedGuardCheckRunning = true
+    try {
+      if (!isEntryButtonPressedForCurrentJoin()) {
+        if (!entryButtonFlowRunning) {
+          addLog('warning', username, 'Speed-guard: post-join кнопка не подтверждена, повторяю')
+          await runEntryButtonFlow(expectedSessionEpoch, 'speed-guard')
+        }
+        return
+      }
+
+      if (!digLoopRunning) {
+        addLog('warning', username, 'Speed-guard: mining loop остановлен, запускаю')
+        startDiggingLoop(expectedSessionEpoch).catch(() => {})
+        return
+      }
+
+      const now = Date.now()
+      if (speedGuardStartedAt && now - speedGuardStartedAt < SPEED_GUARD_START_GRACE_MS) {
+        return
+      }
+
+      const currentRate = getCurrentRatePerMinute()
+      const peakRate = rememberSpeedGuardPeak(currentRate)
+      const targetRate = getSpeedGuardTarget()
+      const progressAge = getMiningProgressAgeMs(now)
+
+      const isHealthyRate = currentRate >= targetRate
+      const hasFreshProgress = Number.isFinite(progressAge) && progressAge <= SPEED_WINDOW_MS
+      if (isHealthyRate || (hasFreshProgress && peakRate < SPEED_GUARD_MIN_LEARN_RATE)) {
+        resetSpeedGuardLowState()
+        return
+      }
+
+      if (!speedGuardLowSince) {
+        speedGuardLowSince = now
+        diagEvent('speed-guard-low-rate-start', { currentRate, targetRate, peakRate, progressAge })
+        return
+      }
+
+      if (now - speedGuardLowSince < SPEED_GUARD_LOW_RATE_MS && progressAge < SPEED_GUARD_NO_PROGRESS_RECONNECT_MS) {
+        return
+      }
+
+      const snapshot = buildMiningSnapshot(0)
+      await recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot)
+    } finally {
+      speedGuardCheckRunning = false
+    }
+  }
+
+  function startSpeedGuard(expectedSessionEpoch) {
+    if (!SPEED_GUARD_ENABLED || speedGuardTimer) return
+    speedGuardStartedAt = Date.now()
+    speedGuardLowSince = 0
+    speedGuardRecoveries = 0
+    speedGuardLastRecoveryAt = 0
+    speedGuardTimer = setInterval(() => {
+      runSpeedGuardCheck(expectedSessionEpoch).catch(error => {
+        diagEvent('speed-guard-error', { error })
+      })
+    }, SPEED_GUARD_INTERVAL_MS)
+    diagEvent('speed-guard-started', {
+      intervalMs: SPEED_GUARD_INTERVAL_MS,
+      startGraceMs: SPEED_GUARD_START_GRACE_MS,
+      minBlocksPerMin: SPEED_GUARD_MIN_BLOCKS_PER_MIN,
+      targetRatio: SPEED_GUARD_TARGET_RATIO,
+      peakRate: getSpeedGuardPeak()
+    })
+  }
+
   function setMenuStage(stage, source = 'unknown') {
     if (menuStage === stage) return
     menuStage = stage
@@ -1491,7 +1883,10 @@ function createBot(cfg) {
     diagEvent('menu-stage', { stage, source })
   }
 
-  function flattenMinecraftText(value) {
+  function flattenMinecraftText(value, options = {}) {
+    const arrayJoiner = options.arrayJoiner ?? ' '
+    const partJoiner = options.partJoiner ?? ' '
+
     if (value == null) return ''
 
     if (typeof value === 'string') {
@@ -1499,7 +1894,7 @@ function createBot(cfg) {
       if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
         try {
-          return flattenMinecraftText(JSON.parse(trimmed))
+          return flattenMinecraftText(JSON.parse(trimmed), options)
         } catch (error) {
           return value
         }
@@ -1508,19 +1903,64 @@ function createBot(cfg) {
     }
 
     if (Array.isArray(value)) {
-      return value.map(flattenMinecraftText).filter(Boolean).join(' ')
+      return value.map(entry => flattenMinecraftText(entry, options)).filter(Boolean).join(arrayJoiner)
     }
 
     if (typeof value === 'object') {
       const parts = []
-      if (value.text) parts.push(flattenMinecraftText(value.text))
-      if (value.translate) parts.push(flattenMinecraftText(value.translate))
-      if (value.extra) parts.push(flattenMinecraftText(value.extra))
-      if (value.value && parts.length === 0) parts.push(flattenMinecraftText(value.value))
-      return parts.filter(Boolean).join(' ')
+      if (Object.prototype.hasOwnProperty.call(value, 'text')) {
+        parts.push(flatifyMinecraftTextPart(value.text, options))
+      }
+      if (value.translate) parts.push(flattenMinecraftText(value.translate, options))
+      if (value.fallback && parts.length === 0) parts.push(flattenMinecraftText(value.fallback, options))
+      if (value.with && parts.length === 0) parts.push(flattenMinecraftText(value.with, options))
+      if (value.extra) parts.push(flattenMinecraftText(value.extra, options))
+      if (value.value && parts.length === 0) parts.push(flattenMinecraftText(value.value, options))
+      if (value.name && parts.length === 0) parts.push(flattenMinecraftText(value.name, options))
+      return parts.filter(Boolean).join(partJoiner)
     }
 
     return String(value)
+  }
+
+  function flatifyMinecraftTextPart(value, options = {}) {
+    if (value == null) return ''
+    return typeof value === 'object'
+      ? flattenMinecraftText(value, options)
+      : String(value)
+  }
+
+  function getMessageJson(message) {
+    if (!message || typeof message !== 'object') return null
+    if (message.json) return message.json
+    if (message.unsigned?.json) return message.unsigned.json
+    return null
+  }
+
+  function isUsableChatText(value) {
+    const text = normalizeChatText(value)
+    return Boolean(text && text !== '[object Object]' && text !== 'undefined' && text !== 'null')
+  }
+
+  function getMinecraftMessageText(message) {
+    const candidates = []
+    const addCandidate = getter => {
+      try {
+        const value = getter()
+        if (isUsableChatText(value)) {
+          candidates.push(normalizeChatText(value))
+        }
+      } catch (error) {}
+    }
+
+    addCandidate(() => typeof message?.toString === 'function' ? message.toString() : null)
+    addCandidate(() => typeof message?.unsigned?.toString === 'function' ? message.unsigned.toString() : null)
+    addCandidate(() => flattenMinecraftText(message?.json, { arrayJoiner: '', partJoiner: '' }))
+    addCandidate(() => flattenMinecraftText(message?.unsigned?.json, { arrayJoiner: '', partJoiner: '' }))
+    addCandidate(() => typeof message === 'string' ? message : null)
+    addCandidate(() => flattenMinecraftText(message, { arrayJoiner: '', partJoiner: '' }))
+
+    return candidates[0] || ''
   }
 
   function getWindowTitleText(window) {
@@ -2132,18 +2572,17 @@ function createBot(cfg) {
         const snapshot = getCoordinateHealthSnapshot()
         health = {
           botPosition: snapshot.botPosition,
-          stand: snapshot.standAnchor,
-          standDistance: snapshot.standDistance,
-          nearestTargetDistance: snapshot.nearestTargetDistance,
+          standDistance: Number.isFinite(snapshot.standDistance) ? Number(snapshot.standDistance.toFixed(2)) : snapshot.standDistance,
+          nearestTargetDistance: Number.isFinite(snapshot.nearestTargetDistance) ? Number(snapshot.nearestTargetDistance.toFixed(2)) : snapshot.nearestTargetDistance,
           progressAgeMs: snapshot.progressAgeMs,
-          nearStand: snapshot.nearStand,
-          nearMiningTargets: snapshot.nearMiningTargets,
-          farFromStand: snapshot.farFromStand,
-          farFromMiningTargets: snapshot.farFromMiningTargets,
-          mineableTargets: snapshot.mineableTargets,
-          transientTargets: snapshot.transientTargets,
-          emptyTargets: snapshot.emptyTargets,
-          unloadedTargets: snapshot.unloadedTargets
+          nearWork: snapshot.nearStand || snapshot.nearMiningTargets,
+          farFromWork: snapshot.farFromStand && snapshot.farFromMiningTargets,
+          targets: {
+            mineable: snapshot.mineableTargets,
+            transient: snapshot.transientTargets,
+            empty: snapshot.emptyTargets,
+            unloaded: snapshot.unloadedTargets
+          }
         }
       }
     } catch (error) {
@@ -2164,19 +2603,14 @@ function createBot(cfg) {
       digLoopRunning,
       waitingForFall,
       fallCheckPassed,
+      fallCheckActive,
       retryingFullServer,
       reconnectScheduled,
       reconnectDueInMs: reconnectDueAt ? Math.max(0, reconnectDueAt - Date.now()) : 0,
       hasReconnectPending: hasReconnectPendingLocal(),
       packetSafetyRemainingMs: getPacketSafetyRemaining(),
-      breakPacketLimits: getBreakPacketLimits(),
-      breakPacketSecondWindowCount,
-      breakPacketBurstWindowCount,
-      lastKeepAliveAgeMs: Date.now() - lastKeepAlive,
       miningProgressAgeMs: getMiningProgressAgeMs(),
-      lastBlockMinedAgeMs: lastBlockMinedAt ? Date.now() - lastBlockMinedAt : null,
-      lastDigAgeMs: lastDigTime ? Date.now() - lastDigTime : null,
-      packetOnlyStartedAgeMs: packetOnlyStartedAt ? Date.now() - packetOnlyStartedAt : null,
+      menuStage,
       currentWindow: bot?.currentWindow ? {
         id: bot.currentWindow.id,
         type: bot.currentWindow.type,
@@ -2187,12 +2621,77 @@ function createBot(cfg) {
     }
   }
 
+  function isNoisyDiagnosticEvent(eventName) {
+    return (
+      eventName === 'menu-flow-skipped-before-spawn' ||
+      eventName === 'menu-open-skipped-before-spawn' ||
+      eventName === 'menu-flow-skipped-reconnect-pending' ||
+      eventName === 'menu-open-skipped-reconnect-pending' ||
+      eventName === 'menu-flow-queue-skipped-reconnect-pending' ||
+      eventName === 'menu-flow-skipped-scanner' ||
+      eventName === 'menu-open-skipped-scanner' ||
+      eventName === 'menu-flow-queue-skipped-scanner' ||
+      eventName === 'menu-open-skipped-limbo' ||
+      eventName === 'menu-open-throttled' ||
+      eventName === 'window-click-throttled' ||
+      eventName === 'menu-flow-queued' ||
+      eventName === 'client-write:position' ||
+      eventName === 'client-packet:position'
+    )
+  }
+
+  function getDiagnosticRepeatKey(eventName, details = {}) {
+    return [
+      eventName,
+      details.source || '',
+      details.state || '',
+      details.reason || '',
+      details.menuStage || menuStage
+    ].join('|')
+  }
+
   function diagEvent(eventName, details = {}) {
     if (!DETAILED_EVENT_LOGGING) return
+    const now = Date.now()
+    const summarizedDetails = summarizeDiagnosticDetails(eventName, details)
+
+    if (isNoisyDiagnosticEvent(eventName)) {
+      const repeatKey = getDiagnosticRepeatKey(eventName, summarizedDetails)
+      const repeat = diagnosticRepeatState.get(repeatKey)
+
+      if (repeat) {
+        repeat.suppressed += 1
+        repeat.lastAt = now
+        repeat.lastDetails = summarizedDetails
+
+        if (now - repeat.lastLogAt < DIAGNOSTIC_REPEAT_SUMMARY_MS) {
+          return
+        }
+
+        diagnosticEventSeq += 1
+        addDiagnosticLog(username, `#${diagnosticEventSeq} ${eventName} (повтор x${repeat.suppressed + 1})`, {
+          ...getDiagnosticState(),
+          ...repeat.lastDetails,
+          repeated: repeat.suppressed + 1,
+          repeatWindowMs: now - repeat.lastLogAt
+        })
+        repeat.suppressed = 0
+        repeat.lastLogAt = now
+        return
+      }
+
+      diagnosticRepeatState.set(repeatKey, {
+        suppressed: 0,
+        lastLogAt: now,
+        lastAt: now,
+        lastDetails: summarizedDetails
+      })
+    }
+
     diagnosticEventSeq += 1
     addDiagnosticLog(username, `#${diagnosticEventSeq} ${eventName}`, {
       ...getDiagnosticState(),
-      ...details
+      ...summarizedDetails
     })
   }
 
@@ -2535,14 +3034,25 @@ function createBot(cfg) {
     lastEmptyTargetButtonRetryAt = 0
     lastBlockMinedAt = 0
     isOnline = false
+    scannerHoldUntil = 0
+    lastScannerLogAt = 0
+    scannerWaitChallengeActive = false
+    lastLimboPositionPacket = null
+    try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
+    limboFallStartTimer = null
     lastMiningDiagnosticAt = 0
     lastEmptyTargetsLogAt = 0
     lastMiningLookAt = 0
     lastReactiveBreakAt = 0
     lastPositionDiagnosticAt = 0
+    diagnosticRepeatState.clear()
     lastMenuOpenAttemptAt = 0
     lastMenuAttempt = 0
     menuFlowQueued = false
+    speedGuardStartedAt = 0
+    speedGuardLowSince = 0
+    speedGuardRecoveries = 0
+    speedGuardCheckRunning = false
     setMenuStage('idle', 'reset-session')
     packetOnlyStartedAt = 0
     breakPacketSecondWindowStartedAt = 0
@@ -2565,6 +3075,45 @@ function createBot(cfg) {
   }
 
 
+  function cleanupActiveSessionTimers(source = 'session-cleanup') {
+    try { if (menuTimer) clearTimeout(menuTimer) } catch(e){}
+    try { if (positionCheckTimer) clearInterval(positionCheckTimer) } catch(e){}
+    try { if (positionCheckStartTimer) clearTimeout(positionCheckStartTimer) } catch(e){}
+    try { if (preventiveRestartTimer) clearTimeout(preventiveRestartTimer) } catch(e){}
+    try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
+    try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
+    try { if (limboFallIntervalTimer) clearInterval(limboFallIntervalTimer) } catch(e){}
+    try { if (limboFallTimeoutTimer) clearTimeout(limboFallTimeoutTimer) } catch(e){}
+    try { if (keepAliveTimer) clearInterval(keepAliveTimer) } catch(e){}
+    try { if (fullServerRetryTimer) clearTimeout(fullServerRetryTimer) } catch(e){}
+    try { if (postJoinStartTimer) clearTimeout(postJoinStartTimer) } catch(e){}
+    try { if (entryButtonWatchdogTimer) clearTimeout(entryButtonWatchdogTimer) } catch(e){}
+    try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch(e){}
+    try { if (speedGuardTimer) clearInterval(speedGuardTimer) } catch(e){}
+    try { restoreLimboPhysics(source) } catch(e){}
+
+    menuTimer = null
+    positionCheckTimer = null
+    positionCheckStartTimer = null
+    preventiveRestartTimer = null
+    fallCheckTimer = null
+    limboFallStartTimer = null
+    limboFallIntervalTimer = null
+    limboFallTimeoutTimer = null
+    keepAliveTimer = null
+    fullServerRetryTimer = null
+    postJoinStartTimer = null
+    entryButtonWatchdogTimer = null
+    menuFlowWakeTimer = null
+    speedGuardTimer = null
+    menuFlowWakeDueAt = 0
+    menuFlowRunning = false
+    menuFlowQueued = false
+    entryButtonFlowRunning = false
+    retryingFullServer = false
+    fallCheckActive = false
+  }
+
   function cleanupTimers() {
     try { if (menuTimer) clearTimeout(menuTimer) } catch(e){}
     try { if (reconnectTimer) clearTimeout(reconnectTimer) } catch(e){}
@@ -2573,6 +3122,7 @@ function createBot(cfg) {
     try { if (positionCheckStartTimer) clearTimeout(positionCheckStartTimer) } catch(e){}
     try { if (preventiveRestartTimer) clearTimeout(preventiveRestartTimer) } catch(e){}
     try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
+    try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
     try { if (limboFallIntervalTimer) clearInterval(limboFallIntervalTimer) } catch(e){}
     try { if (limboFallTimeoutTimer) clearTimeout(limboFallTimeoutTimer) } catch(e){}
     try { if (keepAliveTimer) clearInterval(keepAliveTimer) } catch(e){}
@@ -2581,6 +3131,7 @@ function createBot(cfg) {
     try { if (entryButtonWatchdogTimer) clearTimeout(entryButtonWatchdogTimer) } catch(e){}
     try { if (recreateRetryTimer) clearTimeout(recreateRetryTimer) } catch(e){}
     try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch(e){}
+    try { if (speedGuardTimer) clearInterval(speedGuardTimer) } catch(e){}
     try { restoreLimboPhysics('cleanup') } catch(e){}
     menuTimer = null
     reconnectTimer = null
@@ -2589,6 +3140,7 @@ function createBot(cfg) {
     positionCheckStartTimer = null
     preventiveRestartTimer = null
     fallCheckTimer = null
+    limboFallStartTimer = null
     limboFallIntervalTimer = null
     limboFallTimeoutTimer = null
     keepAliveTimer = null
@@ -2597,6 +3149,7 @@ function createBot(cfg) {
     entryButtonWatchdogTimer = null
     recreateRetryTimer = null
     menuFlowWakeTimer = null
+    speedGuardTimer = null
     menuFlowWakeDueAt = 0
     menuFlowRunning = false
     menuFlowQueued = false
@@ -3127,9 +3680,11 @@ function createBot(cfg) {
 
   function clearLimboTimers() {
     try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch (error) {}
+    try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch (error) {}
     try { if (limboFallIntervalTimer) clearInterval(limboFallIntervalTimer) } catch (error) {}
     try { if (limboFallTimeoutTimer) clearTimeout(limboFallTimeoutTimer) } catch (error) {}
     fallCheckTimer = null
+    limboFallStartTimer = null
     limboFallIntervalTimer = null
     limboFallTimeoutTimer = null
   }
@@ -3149,18 +3704,48 @@ function createBot(cfg) {
     return -((Math.pow(0.98, tick) - 1) * 3.92)
   }
 
+  function normalizeLimboStartY(rawY) {
+    const y = Number(rawY)
+    if (!Number.isFinite(y)) return y
+
+    // ProstoCraft's LimboFilter uses the default 512 Y, but Mineflayer can
+    // report the first 1.16 position packet as 1024. Keep the real check path.
+    if (y >= 768 && y <= 4096) {
+      const halfY = y / 2
+      if (halfY >= 128 && halfY <= 2048) {
+        return halfY
+      }
+    }
+
+    return y
+  }
+
   function startActiveFallCheck(start = {}) {
+    const source = start.source || 'unknown'
+    const canRunFallCheck = Boolean(
+      FEATURE_ACTIVE_FALL_CHECK_ENABLED &&
+      (
+        ANTIBOT_FALL_CHECK_ENABLED ||
+        scannerWaitChallengeActive ||
+        source === 'scanner-message'
+      )
+    )
+    if (!canRunFallCheck) {
+      diagEvent('limbo-active-fall-disabled', { source: start.source || 'unknown' })
+      return false
+    }
     if (!bot || !bot._client || fallCheckActive || fallCheckPassed || joinedSubserver) return
     const fallSessionEpoch = sessionEpoch
     const startX = Number.isFinite(Number(start.x)) ? Number(start.x) : bot.entity?.position?.x
-    const startY = Number.isFinite(Number(start.y)) ? Number(start.y) : bot.entity?.position?.y
+    const rawStartY = Number.isFinite(Number(start.y)) ? Number(start.y) : bot.entity?.position?.y
+    const startY = normalizeLimboStartY(rawStartY)
     const startZ = Number.isFinite(Number(start.z)) ? Number(start.z) : bot.entity?.position?.z
     if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(startZ)) return
 
     clearLimboTimers()
-    pauseLimboPhysics(start.source || 'limbo-active')
-    sendClientIdentityPackets(start.source || 'limbo-active')
-    confirmLimboTeleport(start.teleportId, start.source || 'limbo-active')
+    pauseLimboPhysics(source)
+    sendClientIdentityPackets(source)
+    confirmLimboTeleport(start.teleportId, source)
 
     waitingForFall = true
     fallCheckPassed = false
@@ -3168,20 +3753,21 @@ function createBot(cfg) {
     initialY = startY
 
     let tick = 0
-    let previousDelta = 0
     let currentY = startY
     const startedAt = Date.now()
-    const expectedTotalMs = LIMBO_FALL_TICKS * 50
+    const expectedTotalMs = LIMBO_FALL_TICKS * LIMBO_FALL_PACKET_MS
 
     addLog(
       'info',
       username,
-      `LimboFilter - точная симуляция падения (${LIMBO_FALL_TICKS}т/${LIMBO_FALL_PACKET_MS}мс, X=${startX}, Y=${startY}, Z=${startZ})`
+      `LimboFilter - ванильная траектория (${LIMBO_FALL_TICKS}т/${LIMBO_FALL_PACKET_MS}мс, X=${startX}, Y=${startY}, Z=${startZ})`
     )
     diagEvent('limbo-fall-start', {
       source: start.source,
       startX,
       startY,
+      rawStartY,
+      normalizedStartY: startY !== rawStartY,
       startZ,
       teleportId: start.teleportId,
       ticks: LIMBO_FALL_TICKS,
@@ -3221,9 +3807,8 @@ function createBot(cfg) {
       }
 
       tick += 1
-      const nextDelta = getLimboFallSpeed(tick)
-      currentY -= (nextDelta - previousDelta)
-      previousDelta = nextDelta
+      const fallStep = getLimboFallSpeed(tick)
+      currentY -= fallStep
 
       const sent = writeClientPacket('position', {
         x: startX,
@@ -3238,7 +3823,7 @@ function createBot(cfg) {
 
       if (tick === 1 || tick === 5 || tick === 10 || tick % 20 === 0 || tick === LIMBO_FALL_TICKS) {
         const fallen = initialY - currentY
-        addLog('info', username, `[Limbo ${tick}т] упал ${fallen.toFixed(1)}м`)
+        addLog('info', username, `[Limbo ${tick}т] шаг ${fallStep.toFixed(3)}м, упал ${fallen.toFixed(1)}м`)
       }
 
       if (tick >= LIMBO_FALL_TICKS) {
@@ -3252,18 +3837,20 @@ function createBot(cfg) {
       addLog('warning', username, 'LimboFilter fall hard-timeout -> разрешаю меню и жду сервер')
       completeLimboWait('fall-hard-timeout', { tick, currentY })
     }, Math.max(15000, LIMBO_FALL_TICKS * LIMBO_FALL_PACKET_MS + 6000))
+    return true
   }
 
   function handleLimboPositionPacket(packet) {
+    if (!ACTIVE_FALL_CHECK_ENABLED && !scannerWaitChallengeActive) return
     if (!packet || joinedSubserver || fallCheckPassed) return
     const x = Number(packet.x)
     const y = Number(packet.y)
     const z = Number(packet.z)
     const teleportId = packet.teleportId ?? packet.teleportID ?? packet.teleport_id
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return
     if (Number.isFinite(Number(teleportId))) {
       confirmLimboTeleport(teleportId, 'position-packet')
     }
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return
     if (y < 128) {
       if (!joinedSubserver && !waitingForFall && !fallCheckActive && !bot?.currentWindow) {
         setTimeout(() => {
@@ -3315,6 +3902,16 @@ function createBot(cfg) {
   }
 
   function startLimboFilterBypass() {
+    if (!ACTIVE_FALL_CHECK_ENABLED) {
+      waitingForFall = false
+      fallCheckPassed = false
+      fallCheckActive = false
+      diagEvent('limbo-passive-mode', {
+        fallCheckEnabled: ANTIBOT_FALL_CHECK_ENABLED,
+        enableActiveFallCheck: FEATURE_ACTIVE_FALL_CHECK_ENABLED
+      })
+      return
+    }
     if (fallCheckPassed || fallCheckActive || joinedSubserver) return
     const limboSessionEpoch = sessionEpoch
 
@@ -3604,6 +4201,164 @@ function createBot(cfg) {
     }
   }
 
+  function isChatCaptchaText(text) {
+    const hasCaptcha = text.includes('капч') || text.includes('captcha')
+    const asksInChat =
+      (text.includes('введите') && text.includes('чат')) ||
+      (text.includes('enter') && (text.includes('chat') || text.includes('captcha'))) ||
+      text.includes('решите') ||
+      text.includes('solve')
+    const hasAttempts = text.includes('попыт') || text.includes('attempt')
+
+    return Boolean(
+      hasCaptcha &&
+      (asksInChat || hasAttempts)
+    )
+  }
+
+  function isScannerWaitText(text) {
+    if (isChatCaptchaText(text)) return false
+
+    const hasScanner =
+      text.includes('сканер') ||
+      text.includes('scanner') ||
+      text.includes('antibot') ||
+      text.includes('botfilter')
+    const waitForCheck =
+      text.includes('дождитесь окончания проверки') ||
+      (text.includes('дождитесь') && text.includes('провер')) ||
+      text.includes('please wait')
+    const noMove =
+      text.includes('не двигайтесь') ||
+      text.includes('don\'t move') ||
+      text.includes('do not move')
+
+    return Boolean(
+      hasScanner &&
+      waitForCheck &&
+      noMove
+    )
+  }
+
+  function rememberLimboPositionPacket(packet) {
+    if (!packet || typeof packet !== 'object') return
+    const x = Number(packet.x)
+    const y = Number(packet.y)
+    const z = Number(packet.z)
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return
+    const teleportId = packet.teleportId ?? packet.teleportID ?? packet.teleport_id
+    lastLimboPositionPacket = {
+      x,
+      y,
+      z,
+      teleportId,
+      at: Date.now()
+    }
+  }
+
+  function handleScannerWaitChallenge(rawText, source = 'server-message') {
+    if (joinedSubserver || hasReconnectPendingLocal()) return
+    const challengeSessionEpoch = sessionEpoch
+    scannerWaitChallengeActive = true
+    lastLimboPositionPacket = null
+    waitingForFall = true
+    fallCheckPassed = false
+    fallCheckActive = false
+    try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch (error) {}
+    limboFallStartTimer = null
+
+    const waitMs = Math.max(8000, LIMBO_MENU_WAIT_MS || 12000)
+    addLog('warning', username, `BotFilter: тип проверки = падение/ожидание, жду position-пакет Limbo до ${Math.round(waitMs / 1000)}с`)
+    diagEvent('bot-filter-classified', {
+      type: 'fall-wait',
+      source,
+      waitMs,
+      text: String(rawText || '').slice(0, 500)
+    })
+
+    limboFallStartTimer = setTimeout(() => {
+      limboFallStartTimer = null
+      if (
+        !isCurrentSession(challengeSessionEpoch) ||
+        joinedSubserver ||
+        hasReconnectPendingLocal() ||
+        !scannerWaitChallengeActive ||
+        fallCheckActive ||
+        fallCheckPassed
+      ) {
+        return
+      }
+
+      addLog('warning', username, 'LimboFilter не прислал position-пакет - быстрый перезаход')
+      diagEvent('limbo-position-timeout', {
+        source,
+        waitMs,
+        botPosition: bot?.entity?.position,
+        text: String(rawText || '').slice(0, 500)
+      })
+
+      updateBotStatus(username, 'ожидание')
+      scheduleReconnectLocal(5000, true, 'limbo-position-timeout')
+      cleanupActiveSessionTimers('limbo-position-timeout')
+      waitingForFall = false
+      fallCheckPassed = false
+      scannerWaitChallengeActive = false
+      isOnline = false
+      positionConfirmed = false
+
+      try {
+        if (bot?._client?.socket && !bot._client.socket.destroyed) {
+          bot._client.socket.end()
+        } else if (bot) {
+          bot.quit()
+        }
+      } catch (error) {
+        diagEvent('limbo-position-timeout-close-error', { error })
+      }
+    }, waitMs)
+  }
+
+  function handleChatCaptchaChallenge(rawText, source = 'server-message') {
+    const now = Date.now()
+    scannerHoldUntil = Math.max(scannerHoldUntil, now + CHAT_CAPTCHA_RECONNECT_MS)
+    setMenuStage('chat-captcha-hold', source)
+
+    if (now - lastScannerLogAt >= 30000) {
+      lastScannerLogAt = now
+      addLog('warning', username, 'BotFilter: тип проверки = чат-капча, перезаход через 10 минут')
+    }
+    diagEvent('chat-captcha-reconnect-hold', {
+      source,
+      holdMs: scannerHoldUntil - now,
+      text: String(rawText || '').slice(0, 500)
+    })
+
+    if (!hasReconnectPendingLocal()) {
+      updateBotStatus(username, 'ожидание')
+      scheduleReconnectLocal(CHAT_CAPTCHA_RECONNECT_MS, true, 'chat-captcha')
+    }
+
+    cleanupActiveSessionTimers('chat-captcha-hold')
+    waitingForFall = false
+    fallCheckPassed = false
+    scannerWaitChallengeActive = false
+    isOnline = false
+    positionConfirmed = false
+    try {
+      if (bot?._client?.socket && !bot._client.socket.destroyed) {
+        bot._client.socket.end()
+      } else if (bot) {
+        bot.quit()
+      }
+    } catch (error) {
+      diagEvent('chat-captcha-close-error', { error })
+    }
+  }
+
+  function isEntryBlockedByScanner() {
+    return scannerHoldUntil > Date.now()
+  }
+
   function startClient() {
     const botOptions = {
       host: SERVER_HOST,
@@ -3663,6 +4418,10 @@ function createBot(cfg) {
         }
 
         if (packetName === 'position') {
+          rememberLimboPositionPacket(data)
+        }
+
+        if ((ACTIVE_FALL_CHECK_ENABLED || scannerWaitChallengeActive) && packetName === 'position') {
           handleLimboPositionPacket(data)
         }
       })
@@ -3801,7 +4560,22 @@ function createBot(cfg) {
 
     openServerMenuItem = async function openServerMenuItemImpl(source = 'menu-loop', options = {}) {
       if (!bot || !bot._client || joinedSubserver) return false
+      if (hasReconnectPendingLocal()) {
+        diagEvent('menu-open-skipped-reconnect-pending', { source })
+        return false
+      }
       if (bot.currentWindow) return true
+      if (!isOnline) {
+        diagEvent('menu-open-skipped-before-spawn', { source })
+        return false
+      }
+      if (isEntryBlockedByScanner()) {
+        diagEvent('menu-open-skipped-scanner', {
+          source,
+          holdMs: scannerHoldUntil - Date.now()
+        })
+        return false
+      }
       if (bot._client.state && bot._client.state !== 'play') {
         diagEvent('menu-open-skipped-client-state', { source, state: bot._client.state })
         return false
@@ -3847,6 +4621,17 @@ function createBot(cfg) {
 
     function queueMenuFlow(source = 'queued', delayMs = 0) {
       if (joinedSubserver || retryingFullServer || shuttingDown || !runtimeEnabled) return
+      if (hasReconnectPendingLocal()) {
+        diagEvent('menu-flow-queue-skipped-reconnect-pending', { source })
+        return
+      }
+      if (isEntryBlockedByScanner()) {
+        diagEvent('menu-flow-queue-skipped-scanner', {
+          source,
+          holdMs: scannerHoldUntil - Date.now()
+        })
+        return
+      }
 
       const dueAt = Date.now() + Math.max(0, delayMs)
       if (menuFlowWakeTimer && menuFlowWakeDueAt <= dueAt) {
@@ -3864,6 +4649,21 @@ function createBot(cfg) {
 
     async function driveMenuFlow(source = 'menu-loop', options = {}) {
       if (!bot || joinedSubserver) return false
+      if (hasReconnectPendingLocal()) {
+        diagEvent('menu-flow-skipped-reconnect-pending', { source })
+        return false
+      }
+      if (!isOnline && !bot.currentWindow) {
+        diagEvent('menu-flow-skipped-before-spawn', { source })
+        return false
+      }
+      if (isEntryBlockedByScanner()) {
+        diagEvent('menu-flow-skipped-scanner', {
+          source,
+          holdMs: scannerHoldUntil - Date.now()
+        })
+        return false
+      }
       if (retryingFullServer && !options.allowDuringFullServerRetry) return false
       if (waitingForFall && !fallCheckPassed) {
         diagEvent('menu-open-skipped-limbo', { source, waitingForFall, fallCheckPassed })
@@ -4031,30 +4831,83 @@ function createBot(cfg) {
     }
 
     (function menuLoop(){
-      if (!joinedSubserver && !retryingFullServer && (!waitingForFall || fallCheckPassed)) {
+      if (!joinedSubserver && !retryingFullServer && !hasReconnectPendingLocal() && (!waitingForFall || fallCheckPassed)) {
         tryOpenMenuOnce().catch(()=>{})
       }
       const nextAttempt = 1000 + Math.floor(Math.random()*750)
       menuTimer = setTimeout(menuLoop, nextAttempt)
     })()
 
-    bot.on('message', msg => {
+    bot.on('message', (msg, position, sender) => {
       try {
-        const rawText = msg.toString()
+        const rawText = getMinecraftMessageText(msg)
+        const messagePosition = normalizeServerMessagePosition(position)
+        const messageSource = getServerMessageSource(messagePosition)
+        const isVisibleChatMessage = isVisibleServerMessagePosition(messagePosition)
+        const messageJson = getMessageJson(msg)
+
+        if (!rawText) {
+          diagEvent('server-message-empty', {
+            source: messageSource,
+            position: messagePosition,
+            json: messageJson
+          })
+          return
+        }
+
+        if (isVisibleChatMessage) {
+          addChatLog(username, rawText, messageSource, {
+            position: messagePosition,
+            sender: sender ? String(sender) : undefined
+          })
+        }
+
         if (LOG_SERVER_MESSAGES) {
           diagEvent('server-message', {
+            source: messageSource,
+            position: messagePosition,
             text: rawText.slice(0, 1000),
-            json: msg?.json || null
+            json: messageJson
           })
         }
         const text = rawText.toLowerCase()
 
         if (isTooManyPacketsText(text)) {
-          handleTooManyPacketsNotice('server-message', rawText)
+          handleTooManyPacketsNotice(messageSource, rawText)
           return
         }
 
         maybeSendLoginCommand(rawText, text)
+
+        if (!joinedSubserver) {
+          if (isChatCaptchaText(text)) {
+            const shouldAcceptChatCaptcha =
+              isVisibleChatMessage &&
+              !fallCheckActive &&
+              !waitingForFall
+
+            if (shouldAcceptChatCaptcha) {
+              handleChatCaptchaChallenge(rawText, messageSource)
+              return
+            }
+
+            diagEvent('chat-captcha-ignored', {
+              source: messageSource,
+              position: messagePosition,
+              visibleChat: isVisibleChatMessage,
+              fallCheckActive,
+              waitingForFall,
+              scannerWaitChallengeActive,
+              text: rawText.slice(0, 500)
+            })
+            return
+          }
+
+          if (isScannerWaitText(text)) {
+            handleScannerWaitChallenge(rawText, messageSource)
+            return
+          }
+        }
         
         if (text.includes('вы недавно входили') || 
             text.includes('ввод пароля не требуется') ||
@@ -4070,16 +4923,9 @@ function createBot(cfg) {
           startFullServerRetry()
         }
         
-        if ((text.includes('сканер') || text.includes('scanner')) && 
-            (text.includes('дождитесь') || text.includes('не двигайтесь') || 
-             text.includes('please wait') || text.includes('don\'t move'))) {
-          addLog('warning', username, '! Обнаружен LimboFilter Сканер!')
-          
-          if (!fallCheckActive && !fallCheckPassed) {
-            startActiveFallCheck({ source: 'scanner-message' })
-          }
-        }
         if (!joinedSubserver && text.includes('отслеживается')) {
+          scannerHoldUntil = 0
+          scannerWaitChallengeActive = false
           stopFullServerRetry()
           completeLimboWait('subserver-tracked-message')
           beginSubserverJoin()
@@ -4346,6 +5192,7 @@ function createBot(cfg) {
       await ensureMiningLookAt(true)
 
       addLog('success', username, `Запускаю новый движок добычи (${miningTargets.length} точек, пачка ${MINING_BATCH_SIZE})`)
+      startSpeedGuard(expectedSessionEpoch)
       diagEvent('mining-loop-started', {
         targets: miningTargets.length,
         batchSize: MINING_BATCH_SIZE,

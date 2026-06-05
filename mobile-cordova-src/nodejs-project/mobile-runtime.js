@@ -20,6 +20,7 @@ try {
 
 const DEFAULT_DESKTOP_SETTINGS = {
   launchOnStartup: false,
+  autoStartBotsOnLaunch: false,
   startMinimized: false,
   minimizeToTray: false,
   closeToTray: false
@@ -27,15 +28,22 @@ const DEFAULT_DESKTOP_SETTINGS = {
 
 const runtimeState = createEmptyRuntime()
 const MAX_RUNTIME_LOGS = 120
+const MAX_RUNTIME_CHAT_LOGS = 180
 const ACTIVE_PUBLISH_INTERVAL_MS = 1500
 const BACKGROUND_PUBLISH_INTERVAL_MS = 5000
+const RUNTIME_HEALTH_CHECK_MS = 15000
+const RUNTIME_STALE_EVENT_MS = 90000
+const RUNTIME_SELF_RESTART_COOLDOWN_MS = 30000
 let runtimeApi = null
 let runtimeLoaded = false
 let runtimeActive = false
+let runtimeDesired = false
 let needsReload = false
 let keepAliveEnabled = false
 let publishTimer = null
 let lastPublishedAt = 0
+let lastRuntimeEventAt = Date.now()
+let lastRuntimeSelfRestartAt = 0
 let appInBackground = false
 
 global.__BOT_EVENT_EMITTER__ = handleBotEvent
@@ -66,6 +74,7 @@ cordova.app.on('resume', () => {
 
 ensureRuntimeFiles()
 persistRuntimeLog('Android Node runtime ready.')
+startRuntimeHealthWatchdog()
 publishRuntimeState(true)
 
 function createEmptyRuntime() {
@@ -87,6 +96,7 @@ function createEmptyRuntime() {
       bots: {}
     },
     logs: [],
+    chatLogs: [],
     configPath: CONFIG_PATH,
     logPath: LOG_PATH,
     runtimeDir: DATA_DIR
@@ -148,7 +158,26 @@ function readDesktopSettings() {
 }
 
 function pushLog(entry) {
-  runtimeState.logs = [entry, ...runtimeState.logs].slice(0, MAX_RUNTIME_LOGS)
+  runtimeState.logs = [...runtimeState.logs, entry].slice(-MAX_RUNTIME_LOGS)
+}
+
+function pushChatLog(entry) {
+  const now = new Date()
+  const message = String(entry?.message ?? entry?.rawMessage ?? '').trim()
+  if (!message) return
+
+  const normalizedEntry = {
+    ...entry,
+    botName: entry?.botName || 'SERVER',
+    source: entry?.source || 'chat',
+    position: entry?.position || 'unknown',
+    message,
+    rawMessage: entry?.rawMessage ?? message,
+    time: entry?.time || now.toLocaleTimeString('ru-RU'),
+    timestamp: entry?.timestamp || now.toISOString()
+  }
+
+  runtimeState.chatLogs = [...runtimeState.chatLogs, normalizedEntry].slice(-MAX_RUNTIME_CHAT_LOGS)
 }
 
 function setAndroidRuntimeKeepAlive(nextEnabled) {
@@ -267,6 +296,56 @@ function ensureBotRuntime(forceReload = false) {
   return runtimeApi
 }
 
+function restartRuntimeFromWatchdog(reason = 'runtime-watchdog') {
+  const now = Date.now()
+  if (now - lastRuntimeSelfRestartAt < RUNTIME_SELF_RESTART_COOLDOWN_MS) {
+    return
+  }
+
+  lastRuntimeSelfRestartAt = now
+  persistRuntimeLog(`Runtime watchdog restart: ${reason}`, 'warning', 'ANDROID')
+
+  try {
+    unloadBotRuntime(reason)
+    const botRuntime = ensureBotRuntime(true)
+    if (botRuntime && typeof botRuntime.start === 'function') {
+      botRuntime.start()
+    }
+    runtimeActive = true
+    runtimeState.status = 'running'
+    runtimeState.configPath = CONFIG_PATH
+    runtimeState.logPath = LOG_PATH
+    runtimeState.runtimeDir = DATA_DIR
+    lastRuntimeEventAt = Date.now()
+    syncRuntimeKeepAlive()
+    publishRuntimeState(true)
+  } catch (error) {
+    runtimeActive = false
+    runtimeState.status = 'error'
+    persistRuntimeLog(`Runtime watchdog failed: ${error.message || String(error)}`, 'error', 'ANDROID')
+    syncRuntimeKeepAlive()
+    publishRuntimeState(true)
+  }
+}
+
+function checkRuntimeHealth() {
+  if (!runtimeDesired) return
+
+  const now = Date.now()
+  if (!runtimeActive || !runtimeApi) {
+    restartRuntimeFromWatchdog('runtime-not-active')
+    return
+  }
+
+  if (now - lastRuntimeEventAt > RUNTIME_STALE_EVENT_MS) {
+    restartRuntimeFromWatchdog(`runtime-silent-${Math.round((now - lastRuntimeEventAt) / 1000)}s`)
+  }
+}
+
+function startRuntimeHealthWatchdog() {
+  setInterval(checkRuntimeHealth, RUNTIME_HEALTH_CHECK_MS)
+}
+
 function buildBootstrap() {
   return {
     platform: 'android',
@@ -284,8 +363,12 @@ function buildBootstrap() {
 }
 
 function handleBotEvent(type, payload = {}) {
+  lastRuntimeEventAt = Date.now()
+
   if (type === 'log') {
     pushLog(payload)
+  } else if (type === 'chat') {
+    pushChatLog(payload)
   } else if (type === 'resources') {
     runtimeState.resources = {
       cpuPercent: payload.cpuPercent || 0,
@@ -298,6 +381,10 @@ function handleBotEvent(type, payload = {}) {
   } else if (type === 'host-shutdown') {
     runtimeActive = false
     runtimeState.status = 'stopped'
+    if (runtimeDesired) {
+      restartRuntimeFromWatchdog(payload?.signal || 'host-shutdown')
+      return
+    }
   }
 
   syncRuntimeKeepAlive()
@@ -345,8 +432,10 @@ function handleRequest(request) {
 
       case 'startRuntime': {
         const botRuntime = ensureBotRuntime(needsReload)
+        runtimeDesired = true
         botRuntime.start()
         runtimeActive = true
+        lastRuntimeEventAt = Date.now()
         runtimeState.status = 'running'
         runtimeState.configPath = CONFIG_PATH
         runtimeState.logPath = LOG_PATH
@@ -358,6 +447,7 @@ function handleRequest(request) {
       }
 
       case 'stopRuntime': {
+        runtimeDesired = false
         if (runtimeApi && typeof runtimeApi.stop === 'function') {
           runtimeApi.stop()
         }
@@ -370,11 +460,13 @@ function handleRequest(request) {
       }
 
       case 'restartRuntime': {
+        runtimeDesired = true
         unloadBotRuntime('manual-restart')
         needsReload = false
         const botRuntime = ensureBotRuntime(true)
         botRuntime.start()
         runtimeActive = true
+        lastRuntimeEventAt = Date.now()
         runtimeState.status = 'running'
         syncRuntimeKeepAlive()
         publishRuntimeState(true)

@@ -6,6 +6,12 @@ const DESKTOP_SETTINGS_FIELDS_V2 = [
     help: 'Добавляет приложение в автозапуск Windows, чтобы студия могла подниматься сразу после входа в систему.'
   },
   {
+    path: 'autoStartBotsOnLaunch',
+    kind: 'boolean',
+    label: 'Автозапуск ботов при входе',
+    help: 'После открытия программы backend сразу запускает ботов без ручного нажатия кнопки старт.'
+  },
+  {
     path: 'startMinimized',
     kind: 'boolean',
     label: 'Стартовать свернутым',
@@ -506,32 +512,11 @@ const VISIBLE_CONFIG_SETTING_PATHS = new Set([
   'server.host',
   'server.version',
   'server.password',
-  'timing.miningLoopIdleMs',
-  'timing.miningBatchSize',
-  'timing.burstBreakWindowMs',
-  'timing.burstBreakIntervalMs',
-  'timing.burstBreakRepeats',
-  'timing.breakPacketMaxPerSecond',
-  'timing.packetOnlyMining',
-  'timing.entryButtonRetryIntervalMs',
-  'timing.entryButtonStartupAttempts',
-  'timing.entryButtonStartupRetryMs',
-  'timing.entryButtonConfirmMs',
-  'timing.entryButtonWatchdogMs',
-  'timing.emptyTargetButtonRetryMs',
-  'timing.emptyTargetButtonRetryLimit',
-  'timing.postJoinPositionGraceMs',
-  'timing.restartIfIdleMs',
-  'timing.reconnectRegular',
-  'timing.reconnectOnInternetLoss',
-  'position.checkInterval',
-  'position.farDistance',
-  'globalRestart.memoryLimitMB',
+  'timing.periodicRejoinMs',
+  'timing.rotationDelayBetweenBots',
   'menu.slot1',
   'menu.slot2',
   'menu.hotbarSlot',
-  'features.enableAggressiveMining',
-  'features.enableSoftRestart',
   'features.enablePeriodicRotation',
   'logging.debugMode'
 ])
@@ -592,6 +577,7 @@ function createEmptyRuntime() {
       bots: {}
     },
     logs: [],
+    chatLogs: [],
     configPath: '-',
     logPath: '-',
     runtimeDir: '-'
@@ -601,6 +587,7 @@ function createEmptyRuntime() {
 function createDefaultDesktopSettings() {
   return {
     launchOnStartup: false,
+    autoStartBotsOnLaunch: false,
     startMinimized: false,
     minimizeToTray: false,
     closeToTray: false
@@ -687,6 +674,7 @@ function flushRenderQueue() {
   if (nextParts.has('settings')) renderSettingsV2()
   if (nextParts.has('validation')) renderValidation()
   if (nextParts.has('logs')) renderLogs()
+  if (nextParts.has('chat')) renderChatLogs()
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -789,6 +777,39 @@ function formatLiveStatus(status) {
   return map[status] || String(status)
 }
 
+function getLiveStatusClass(status) {
+  const map = {
+    mining: 'bot-live--good',
+    running: 'bot-live--good',
+    online: 'bot-live--good',
+    starting: 'bot-live--busy',
+    stopping: 'bot-live--busy',
+    reconnecting: 'bot-live--busy',
+    paused: 'bot-live--warn',
+    idle: 'bot-live--warn',
+    error: 'bot-live--bad',
+    offline: 'bot-live--idle',
+    stopped: 'bot-live--idle'
+  }
+
+  return map[status] || 'bot-live--idle'
+}
+
+function formatCoordinateTriplet(coordinate) {
+  if (!coordinate) return '0, 0, 0'
+  return `${coordinate.x ?? 0}, ${coordinate.y ?? 0}, ${coordinate.z ?? 0}`
+}
+
+function formatEntryButtonLabel(bot) {
+  if (!bot?.entryButton?.enabled) return 'выключена'
+  return `${bot.entryButton.x ?? 0}, ${bot.entryButton.y ?? 0}, ${bot.entryButton.z ?? 0}`
+}
+
+function formatLastBlockLabel(liveBot) {
+  if (!liveBot?.lastBlockTime) return 'нет данных'
+  return `${formatDuration(Date.now() - liveBot.lastBlockTime)} назад`
+}
+
 function formatDuration(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return '0с'
   const totalSeconds = Math.floor(ms / 1000)
@@ -848,6 +869,7 @@ function getActiveTabTitle() {
 
   if (state.activeTab === 'settings') return 'Настройки runtime'
   if (state.activeTab === 'logs') return 'Логи runtime'
+  if (state.activeTab === 'chat') return 'Чат сервера'
   return 'Пульт добычи'
 }
 
@@ -867,6 +889,10 @@ function buildTopbarSubtitle({ configuredBots, activeBots, runtimeTotalBots, isR
 
   if (state.activeTab === 'logs') {
     return `Последние сообщения runtime. Сейчас в буфере ${formatNumber((state.runtime.logs || []).length)} записей.`
+  }
+
+  if (state.activeTab === 'chat') {
+    return `Отдельный поток сообщений сервера и чата. Сейчас в буфере ${formatNumber((state.runtime.chatLogs || []).length)} записей.`
   }
 
   if (supportsRuntimeControl && isRunning) {
@@ -1032,6 +1058,9 @@ function parsePrimitiveValue(kind, rawValue) {
 function renderTabs() {
   const isDashboard = state.activeTab === 'dashboard'
   elements.workspace.classList.toggle('workspace--dashboard', isDashboard)
+  ;['bots', 'settings', 'logs', 'chat'].forEach(tabName => {
+    elements.workspace.classList.toggle(`workspace--${tabName}`, state.activeTab === tabName)
+  })
 
   document.querySelectorAll('.nav-item').forEach(button => {
     button.classList.toggle('is-active', button.dataset.tab === state.activeTab)
@@ -1122,6 +1151,7 @@ function renderAll() {
   renderSettingsV2()
   renderValidation()
   renderLogs()
+  renderChatLogs()
 }
 
 function cacheElements() {
@@ -1152,6 +1182,8 @@ function cacheElements() {
   elements.validationBanner = document.getElementById('validation-banner')
   elements.logStream = document.getElementById('log-stream')
   elements.logCounter = document.getElementById('log-counter')
+  elements.chatLogStream = document.getElementById('chat-log-stream')
+  elements.chatLogCounter = document.getElementById('chat-log-counter')
   elements.configPathLabel = document.getElementById('config-path-label')
   elements.logPathLabel = document.getElementById('log-path-label')
   elements.runtimePathLabel = document.getElementById('runtime-path-label')
@@ -1209,6 +1241,8 @@ async function bootstrap() {
       runtimeParts.push('botList', 'botEditor')
     } else if (state.activeTab === 'logs') {
       runtimeParts.push('logs')
+    } else if (state.activeTab === 'chat') {
+      runtimeParts.push('chat')
     }
 
     queueRender(runtimeParts)
@@ -1612,6 +1646,9 @@ function renderChrome() {
   }
 
   elements.logCounter.textContent = `${(state.runtime.logs || []).length} записей`
+  if (elements.chatLogCounter) {
+    elements.chatLogCounter.textContent = `${(state.runtime.chatLogs || []).length} записей`
+  }
   if (elements.configPathLabel) elements.configPathLabel.textContent = state.runtime.configPath || '-'
   if (elements.logPathLabel) elements.logPathLabel.textContent = state.runtime.logPath || '-'
   if (elements.runtimePathLabel) elements.runtimePathLabel.textContent = state.runtime.runtimeDir || '-'
@@ -1719,51 +1756,49 @@ function renderBotList() {
   }
 
   const snapshotBots = state.runtime.snapshot?.bots || {}
+  const activeCount = bots.filter(bot => {
+    const status = snapshotBots[bot.username]?.status
+    return status && !['offline', 'stopped', 'error'].includes(status)
+  }).length
 
-  elements.botList.innerHTML = bots.map((bot, index) => {
+  const headerMarkup = `
+    <div class="bot-list__header">
+      <div>
+        <p class="eyebrow">Profiles</p>
+        <h4>Профили</h4>
+      </div>
+      <span class="chip">${formatNumber(bots.length)} бота · ${formatNumber(activeCount)} активн.</span>
+    </div>
+  `
+
+  const cardMarkup = bots.map((bot, index) => {
     const liveBot = snapshotBots[bot.username]
-    const buttonLabel = bot.entryButton?.enabled
-      ? `${bot.entryButton.x}, ${bot.entryButton.y}, ${bot.entryButton.z}`
-      : 'выкл'
+    const liveStatus = liveBot ? formatLiveStatus(liveBot.status) : 'Не запущен'
+    const liveStatusClass = getLiveStatusClass(liveBot?.status)
+    const routePoints = bot.blocksToMine?.length || 0
 
     return `
-      <button class="bot-card ${index === state.selectedBotIndex ? 'is-active' : ''}" type="button" data-bot-index="${index}">
-        <div class="panel-header panel-header--spread">
-          <div>
-            <p class="eyebrow">Bot slot ${index + 1}</p>
-            <h4>${escapeHtml(bot.username)}</h4>
+      <button class="bot-card ${liveStatusClass} ${index === state.selectedBotIndex ? 'is-active' : ''}" type="button" data-bot-index="${index}">
+        <div class="bot-card__top">
+          <span class="bot-card__index">${String(index + 1).padStart(2, '0')}</span>
+          <div class="bot-card__identity">
+            <strong>${escapeHtml(bot.username)}</strong>
+            <span>Стенд: ${escapeHtml(formatCoordinateTriplet(bot.standPosition))}</span>
           </div>
-          <span class="chip">${escapeHtml(liveBot ? formatLiveStatus(liveBot.status) : 'Не запущен')}</span>
+          <span class="bot-status-dot" aria-hidden="true"></span>
         </div>
-        <div class="bot-card-meta">
-          <span>Стенд: ${bot.standPosition.x}, ${bot.standPosition.y}, ${bot.standPosition.z}</span>
-          <span>Точек добычи: ${bot.blocksToMine.length}</span>
-          <span>Кнопка: ${escapeHtml(buttonLabel)}</span>
-          <span>Добыто: ${formatNumber(liveBot?.blocksTotal || 0)}</span>
-        </div>
+        <p class="bot-card__line">${escapeHtml(liveStatus)} · ${formatNumber(liveBot?.blocksLastMinute || 0, 1)} б/м · ${formatNumber(routePoints)} точек</p>
       </button>
     `
   }).join('')
+
+  elements.botList.innerHTML = headerMarkup + cardMarkup
 
   elements.botList.querySelectorAll('[data-bot-index]').forEach(button => {
     button.addEventListener('click', () => {
       selectBot(Number(button.dataset.botIndex))
     })
   })
-}
-
-function renderCoordinateRows(bot) {
-  return bot.blocksToMine.map((coordinate, index) => `
-    <div class="coordinate-row">
-      ${['x', 'y', 'z'].map(axis => `
-        <label class="field">
-          <span class="field-label">${axis.toUpperCase()}</span>
-          <input type="number" step="any" value="${coordinate[axis]}" data-coordinate-index="${index}" data-coordinate-axis="${axis}" />
-        </label>
-      `).join('')}
-      <button class="button button--danger" type="button" data-remove-coordinate="${index}">Удалить</button>
-    </div>
-  `).join('')
 }
 
 function renderBotEditor() {
@@ -1775,78 +1810,82 @@ function renderBotEditor() {
 
   const liveBot = state.runtime.snapshot?.bots?.[bot.username]
   const liveStatus = liveBot ? formatLiveStatus(liveBot.status) : 'Не запущен'
+  const liveStatusClass = getLiveStatusClass(liveBot?.status)
   const liveBlocks = liveBot?.blocksTotal || 0
   const liveRate = liveBot?.blocksLastMinute || 0
+  const standLabel = formatCoordinateTriplet(bot.standPosition)
+  const buttonLabel = formatEntryButtonLabel(bot)
+  const lastBlockLabel = formatLastBlockLabel(liveBot)
+  const routePointsCount = (bot.blocksToMine || []).length
 
   elements.botEditor.innerHTML = `
-    <article class="bot-hero-card">
-      <div class="bot-hero-main">
-        <p class="eyebrow">Selected bot</p>
+    <article class="bot-control-panel ${liveStatusClass}">
+      <div class="bot-control-panel__main">
+        <p class="eyebrow">Selected</p>
         <h3>${escapeHtml(bot.username)}</h3>
-        <p class="muted-copy">Профиль хранит имя, позицию стенда, рабочий радиус и маршрут добычи. Если backend уже работает, справа виден живой статус и текущий темп по этому боту.</p>
+        <div class="bot-control-panel__meta">
+          <span>Стенд: ${escapeHtml(standLabel)}</span>
+          <span>Кнопка: ${escapeHtml(buttonLabel)}</span>
+        </div>
       </div>
-      <div class="bot-hero-stats">
+      <div class="bot-live-grid bot-live-grid--compact">
         <div class="bot-stat">
           <span>Статус</span>
           <strong>${escapeHtml(liveStatus)}</strong>
         </div>
         <div class="bot-stat">
-          <span>Точек маршрута</span>
-          <strong>${formatNumber(bot.blocksToMine.length)}</strong>
+          <span>Скорость</span>
+          <strong>${formatNumber(liveRate, 1)} б/м</strong>
         </div>
         <div class="bot-stat">
-          <span>Добыто / мин</span>
-          <strong>${formatNumber(liveBlocks)} / ${formatNumber(liveRate, 1)}</strong>
+          <span>Добыто</span>
+          <strong>${formatNumber(liveBlocks)}</strong>
         </div>
       </div>
     </article>
 
     <div class="bot-editor-sections">
-      <article class="bot-editor-card">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Identity</p>
-            <h3>${escapeHtml(bot.username)}</h3>
+      <article class="bot-editor-card bot-editor-card--profile">
+        <div class="bot-card-section">
+          <div class="panel-header panel-header--spread">
+            <div>
+              <p class="eyebrow">Profile</p>
+              <h3>Основное</h3>
+            </div>
+            <span class="chip">Блок: ${escapeHtml(lastBlockLabel)}</span>
+          </div>
+          <div class="field-grid bot-field-grid--two">
+            <label class="field">
+              <span class="field-label">Имя бота</span>
+              <input type="text" value="${escapeAttribute(bot.username)}" data-bot-field="username" />
+            </label>
+            <label class="field">
+              <span class="field-label">Макс. дистанция от стенда</span>
+              <input type="number" inputmode="decimal" step="any" value="${bot.maxDistanceFromStand}" data-bot-field="maxDistanceFromStand" />
+            </label>
           </div>
         </div>
-        <div class="field-grid">
-          <label class="field">
-            <span class="field-label">Имя бота</span>
-            <input type="text" value="${escapeAttribute(bot.username)}" data-bot-field="username" />
-          </label>
-          <label class="field">
-            <span class="field-label">Макс. дистанция от стенда</span>
-            <input type="number" step="any" value="${bot.maxDistanceFromStand}" data-bot-field="maxDistanceFromStand" />
-          </label>
-        </div>
-      </article>
 
-      <article class="bot-editor-card">
-        <div class="panel-header">
+        <div class="bot-card-section">
           <div>
             <p class="eyebrow">Stand position</p>
-            <h3>Позиция стенда и рабочий радиус</h3>
+            <h3>Точка стояния</h3>
+          </div>
+          <div class="field-grid bot-axis-grid">
+            ${['x', 'y', 'z'].map(axis => `
+              <label class="field">
+                <span class="field-label">${axis.toUpperCase()}</span>
+                <input type="number" inputmode="decimal" step="any" value="${bot.standPosition[axis]}" data-stand-axis="${axis}" />
+              </label>
+            `).join('')}
           </div>
         </div>
-        <div class="field-grid">
-          ${['x', 'y', 'z'].map(axis => `
-            <label class="field">
-              <span class="field-label">${axis.toUpperCase()}</span>
-              <input type="number" step="any" value="${bot.standPosition[axis]}" data-stand-axis="${axis}" />
-            </label>
-          `).join('')}
-        </div>
-      </article>
 
-      <article class="bot-editor-card">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Entry action</p>
-            <h3>Кнопка после входа</h3>
-          </div>
-        </div>
-        <p class="muted-copy">Бот может один раз нажать кнопку входа после успешного захода на нужный подсервер.</p>
-        <div class="field-grid">
+        <details class="bot-details" ${bot.entryButton?.enabled ? 'open' : ''}>
+          <summary>
+            <span>Кнопка после входа</span>
+            <span class="chip">${escapeHtml(buttonLabel)}</span>
+          </summary>
           <label class="field--checkbox field--checkbox-rich">
             <div class="field-checkbox-copy">
               <div class="field-label field-label--rich">
@@ -1855,45 +1894,43 @@ function renderBotEditor() {
             </div>
             <input type="checkbox" ${bot.entryButton?.enabled ? 'checked' : ''} data-entry-button-enabled="true" />
           </label>
-          ${['x', 'y', 'z'].map(axis => `
-            <label class="field">
-              <span class="field-label">Кнопка ${axis.toUpperCase()}</span>
-              <input
-                type="number"
-                step="any"
-                value="${bot.entryButton?.[axis] ?? 0}"
-                data-entry-button-axis="${axis}"
-                ${bot.entryButton?.enabled ? '' : 'disabled'}
-              />
-            </label>
-          `).join('')}
-        </div>
+          <div class="field-grid bot-axis-grid">
+            ${['x', 'y', 'z'].map(axis => `
+              <label class="field">
+                <span class="field-label">Кнопка ${axis.toUpperCase()}</span>
+                <input
+                  type="number"
+                  inputmode="decimal"
+                  step="any"
+                  value="${bot.entryButton?.[axis] ?? 0}"
+                  data-entry-button-axis="${axis}"
+                  ${bot.entryButton?.enabled ? '' : 'disabled'}
+                />
+              </label>
+            `).join('')}
+          </div>
+        </details>
       </article>
 
       <article class="bot-editor-card bot-editor-card--route">
         <div class="panel-header panel-header--spread">
           <div>
             <p class="eyebrow">Mining route</p>
-            <h3>Координаты блоков для добычи</h3>
+            <h3>Маршрут добычи</h3>
           </div>
-          <span class="chip">${bot.blocksToMine.length} точек</span>
+          <span class="chip">${routePointsCount} точек</span>
         </div>
-        <p class="muted-copy">Маршрут сохраняется прямо в профиле бота <strong>${escapeHtml(bot.username)}</strong>.</p>
-        <div class="coordinate-bulk-editor">
-          <label class="field">
-            <span class="field-label">Список координат</span>
-            <textarea id="coordinate-list-textarea" class="coordinate-textarea coordinate-textarea--inline" spellcheck="false">${escapeHtml(formatCoordinatesText(bot.blocksToMine))}</textarea>
-          </label>
+        <div class="coordinate-bulk-editor coordinate-bulk-editor--primary">
           <div class="coordinates-toolbar coordinates-toolbar--compact">
             <button class="button button--primary" type="button" id="apply-coordinate-list-btn">Применить список</button>
             <button class="button button--secondary" type="button" id="copy-coordinate-list-btn">Копировать</button>
             <button class="button button--secondary" type="button" id="open-coordinate-modal-btn">Открыть крупно</button>
           </div>
+          <label class="field">
+            <span class="field-label">Список координат блоков</span>
+            <textarea id="coordinate-list-textarea" class="coordinate-textarea coordinate-textarea--inline" spellcheck="false">${escapeHtml(formatCoordinatesText(bot.blocksToMine))}</textarea>
+          </label>
         </div>
-        <div class="coordinates-toolbar">
-          <button class="button button--primary" type="button" id="add-coordinate-btn">Добавить точку</button>
-        </div>
-        <div class="coordinates-list">${renderCoordinateRows(bot)}</div>
       </article>
     </div>
   `
@@ -1934,15 +1971,6 @@ function renderBotEditor() {
     })
   })
 
-  elements.botEditor.querySelectorAll('[data-coordinate-index]').forEach(input => {
-    input.addEventListener('input', event => {
-      const coordinateIndex = Number(event.currentTarget.dataset.coordinateIndex)
-      const axis = event.currentTarget.dataset.coordinateAxis
-      bot.blocksToMine[coordinateIndex][axis] = parsePrimitiveValue('number', event.currentTarget.value)
-      markDirty()
-    })
-  })
-
   const coordinateListTextarea = elements.botEditor.querySelector('#coordinate-list-textarea')
   const applyCoordinateListButton = elements.botEditor.querySelector('#apply-coordinate-list-btn')
   const copyCoordinateListButton = elements.botEditor.querySelector('#copy-coordinate-list-btn')
@@ -1978,24 +2006,6 @@ function renderBotEditor() {
       coordinateListTextarea.select()
       showToast('Список выделен, можно скопировать вручную.', 'warning')
     }
-  })
-
-  elements.botEditor.querySelectorAll('[data-remove-coordinate]').forEach(button => {
-    button.addEventListener('click', () => {
-      const coordinateIndex = Number(button.dataset.removeCoordinate)
-      bot.blocksToMine.splice(coordinateIndex, 1)
-      if (!bot.blocksToMine.length) {
-        bot.blocksToMine.push({ x: 0, y: 0, z: 0 })
-      }
-      markDirty()
-      queueRender('botEditor', 'botList', 'dashboard')
-    })
-  })
-
-  elements.botEditor.querySelector('#add-coordinate-btn').addEventListener('click', () => {
-    bot.blocksToMine.push({ x: 0, y: 0, z: 0 })
-    markDirty()
-    queueRender('botEditor', 'botList', 'dashboard')
   })
 
   elements.botEditor.querySelector('#open-coordinate-modal-btn').addEventListener('click', () => {
@@ -2061,7 +2071,7 @@ function renderSettingsV2() {
           <h4>Конфиг runtime и ботов</h4>
         </div>
       </div>
-      <p class="muted-copy">Эти значения сохраняются в <code>config.json</code> и используются backend при запуске, восстановлении, ротации и мониторинге всех ботов.</p>
+      <p class="muted-copy">Здесь оставлены только базовые параметры. Остальные тонкие значения остаются в <code>config.json</code> и не показываются в обычном интерфейсе.</p>
       <div class="settings-jump-bar">
         ${sectionTargets.map(section => `
           <button class="settings-jump" type="button" data-settings-jump="${section.id}">
@@ -2150,6 +2160,49 @@ function renderLogs() {
     elements.logStream.insertAdjacentHTML(
       'beforeend',
       `<div class="log-trim-note">Показаны последние ${logs.length} записей из ${totalLogs.length}; свежие записи находятся сверху.</div>`
+    )
+  }
+}
+
+function formatChatSource(entry = {}) {
+  const position = String(entry.position || '').toLowerCase()
+  const labels = {
+    chat: 'чат',
+    system: 'система',
+    game_info: 'actionbar',
+    unknown: 'неизвестно'
+  }
+  const label = labels[position] || entry.source || 'чат'
+  return entry.sender ? `${label} / ${entry.sender}` : label
+}
+
+function renderChatLogs() {
+  if (!elements.chatLogStream) return
+
+  const totalChatLogs = state.runtime.chatLogs || []
+  const chatLogs = totalChatLogs.slice(-180).reverse()
+  if (!chatLogs.length) {
+    elements.chatLogStream.innerHTML = state.capabilities.runtimeControl !== false
+      ? '<div class="empty-state">Чат появится после запуска backend. Здесь будут сообщения сервера, сканера и игроков отдельно от runtime-логов.</div>'
+      : '<div class="empty-state">В Android-сборке здесь появятся сообщения чата, если подключить локальный runtime.</div>'
+    return
+  }
+
+  elements.chatLogStream.innerHTML = chatLogs.map(entry => `
+    <article class="log-entry chat-entry" data-level="chat">
+      <div class="log-entry__top">
+        <span>${escapeHtml(entry.time || '-')}</span>
+        <span>${escapeHtml(entry.botName || 'SERVER')}</span>
+        <span>${escapeHtml(formatChatSource(entry))}</span>
+      </div>
+      <pre class="log-entry__message">${escapeHtml(entry.message || entry.rawMessage || '')}</pre>
+    </article>
+  `).join('')
+
+  if (totalChatLogs.length > chatLogs.length) {
+    elements.chatLogStream.insertAdjacentHTML(
+      'beforeend',
+      `<div class="log-trim-note">Показаны последние ${chatLogs.length} сообщений из ${totalChatLogs.length}; свежие сообщения находятся сверху.</div>`
     )
   }
 }
@@ -2258,7 +2311,8 @@ function switchTab(nextTab) {
     nextTab === 'dashboard' ? 'dashboard' : null,
     nextTab === 'bots' ? ['botList', 'botEditor'] : null,
     nextTab === 'settings' ? 'settings' : null,
-    nextTab === 'logs' ? 'logs' : null
+    nextTab === 'logs' ? 'logs' : null,
+    nextTab === 'chat' ? 'chat' : null
   )
 }
 
@@ -2597,6 +2651,8 @@ function attachStaticListeners() {
         resizeParts.push('settings')
       } else if (state.activeTab === 'logs') {
         resizeParts.push('logs')
+      } else if (state.activeTab === 'chat') {
+        resizeParts.push('chat')
       }
 
       queueRender(resizeParts)
@@ -2608,7 +2664,7 @@ function buildMobileActions({ supportsRuntimeControl, supportsImport, supportsEx
   const selectedBot = getSelectedBot()
   const actions = []
 
-  if (supportsRuntimeControl) {
+  if (supportsRuntimeControl && state.activeTab === 'dashboard') {
     actions.push({
       id: 'toggle-runtime',
       label: isRunning ? 'Остановить' : 'Запустить',
@@ -2634,16 +2690,16 @@ function buildMobileActions({ supportsRuntimeControl, supportsImport, supportsEx
     if (supportsImport) actions.push({ id: 'import-config', label: 'Импорт', variant: 'secondary' })
     if (supportsExport) actions.push({ id: 'export-config', label: 'Экспорт', variant: 'secondary' })
     actions.push({ id: 'reset-config', label: 'Сбросить', variant: 'ghost' })
-  } else {
-    actions.push({ id: 'open-bots', label: 'Боты', variant: 'secondary' })
   }
 
-  actions.push({
-    id: 'save-config',
-    label: 'Сохранить',
-    variant: state.isDirty ? 'primary' : 'ghost',
-    disabled: !state.isDirty
-  })
+  if (state.isDirty) {
+    actions.push({
+      id: 'save-config',
+      label: 'Сохранить',
+      variant: 'primary',
+      disabled: false
+    })
+  }
 
   return actions.filter((action, index, list) => (
     list.findIndex(candidate => candidate.id === action.id) === index

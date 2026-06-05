@@ -6,6 +6,7 @@ const cordovaRoot = path.join(projectRoot, 'mobile-cordova')
 const rendererSource = path.join(projectRoot, 'desktop', 'renderer')
 const rendererTarget = path.join(cordovaRoot, 'www')
 const platformRendererTarget = path.join(cordovaRoot, 'platforms', 'android', 'app', 'src', 'main', 'assets', 'www')
+const platformAssetsRoot = path.join(cordovaRoot, 'platforms', 'android', 'app', 'src', 'main', 'assets')
 const platformWwwSource = path.join(cordovaRoot, 'platforms', 'android', 'platform_www')
 const runtimeSource = path.join(projectRoot, 'mobile-cordova-src', 'nodejs-project')
 const runtimeTarget = path.join(rendererTarget, 'nodejs-project')
@@ -13,6 +14,27 @@ const platformRuntimeTarget = path.join(platformRendererTarget, 'nodejs-project'
 const runtimeInstallSource = path.join(cordovaRoot, 'nodejs-project')
 const rootRuntimeFiles = ['bot.js', 'monitoring.js', 'config.json']
 const cordovaWebRuntimeFiles = ['cordova.js', 'cordova_plugins.js']
+const runtimePrunedDirectories = new Set([
+  '.bin',
+  '.github',
+  '.vscode',
+  '@types',
+  'coverage',
+  'doc',
+  'docs',
+  'example',
+  'examples',
+  'sample',
+  'samples',
+  'test',
+  'tests'
+])
+const runtimePrunedFilePatterns = [
+  /\.d\.ts$/i,
+  /\.gz$/i,
+  /\.map$/i,
+  /\.ts$/i
+]
 
 function ensureProjectExists() {
   if (!fs.existsSync(cordovaRoot)) {
@@ -63,6 +85,69 @@ function copyRecursive(sourcePath, targetPath) {
   fs.copyFileSync(sourcePath, targetPath)
 }
 
+function pruneRuntimeNodeModules(targetPath) {
+  if (!fs.existsSync(targetPath)) return
+
+  for (const entry of fs.readdirSync(targetPath, { withFileTypes: true })) {
+    const entryPath = path.join(targetPath, entry.name)
+
+    if (entry.name.startsWith('.')) {
+      fs.rmSync(entryPath, { recursive: entry.isDirectory(), force: true })
+      continue
+    }
+
+    if (entry.isDirectory()) {
+      if (runtimePrunedDirectories.has(entry.name)) {
+        fs.rmSync(entryPath, { recursive: true, force: true })
+        continue
+      }
+
+      pruneRuntimeNodeModules(entryPath)
+      continue
+    }
+
+    if (entry.isFile() && runtimePrunedFilePatterns.some(pattern => pattern.test(entry.name))) {
+      fs.rmSync(entryPath, { force: true })
+    }
+  }
+}
+
+function toAssetPath(targetPath) {
+  return targetPath.replace(/\\/g, '/')
+}
+
+function collectRuntimeAssetLists(assetsRoot, sourcePath, dirs, files) {
+  for (const entry of fs.readdirSync(sourcePath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue
+
+    const entryPath = path.join(sourcePath, entry.name)
+    const assetPath = toAssetPath(path.relative(assetsRoot, entryPath))
+
+    if (entry.isDirectory()) {
+      dirs.push(assetPath)
+      collectRuntimeAssetLists(assetsRoot, entryPath, dirs, files)
+      continue
+    }
+
+    if (entry.isFile()) {
+      files.push(assetPath)
+    }
+  }
+}
+
+function writeRuntimeAssetLists(assetsRoot) {
+  const runtimeAssetsRoot = path.join(assetsRoot, 'www', 'nodejs-project')
+  const dirs = []
+  const files = []
+
+  if (fs.existsSync(runtimeAssetsRoot)) {
+    collectRuntimeAssetLists(assetsRoot, runtimeAssetsRoot, dirs, files)
+  }
+
+  fs.writeFileSync(path.join(assetsRoot, 'dir.list'), `${dirs.sort().join('\n')}\n`)
+  fs.writeFileSync(path.join(assetsRoot, 'file.list'), `${files.sort().join('\n')}\n`)
+}
+
 function resolveExistingPath(paths) {
   return paths.find(candidatePath => fs.existsSync(candidatePath)) || null
 }
@@ -83,6 +168,7 @@ function syncRuntimeDependencies() {
 
   if (runtimeModulesSource) {
     copyRecursive(runtimeModulesSource, runtimeModulesTarget)
+    pruneRuntimeNodeModules(runtimeModulesTarget)
   } else {
     console.warn(
       `Runtime node_modules were not found in ${runtimeSource} or ${runtimeInstallSource}. ` +
@@ -120,6 +206,7 @@ function syncCordovaWebRuntime(targetRoot) {
 function main() {
   ensureProjectExists()
 
+  tryRemoveRecursive(rendererTarget)
   copyRecursive(rendererSource, rendererTarget)
   ensureDirectory(runtimeTarget)
   copyRecursive(runtimeSource, runtimeTarget)
@@ -135,6 +222,7 @@ function main() {
   syncCordovaWebRuntime(rendererTarget)
 
   if (fs.existsSync(path.dirname(platformRendererTarget))) {
+    tryRemoveRecursive(platformRendererTarget)
     copyRecursive(rendererTarget, platformRendererTarget)
     ensureDirectory(platformRuntimeTarget)
 
@@ -146,6 +234,7 @@ function main() {
     }
 
     syncCordovaWebRuntime(platformRendererTarget)
+    writeRuntimeAssetLists(platformAssetsRoot)
   }
 
   console.log(`Synced Cordova app assets into ${cordovaRoot}`)

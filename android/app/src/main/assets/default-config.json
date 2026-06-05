@@ -74,7 +74,17 @@
     "startStaggerJitter": 500,
     "periodicRejoinMs": 3600000,
     "rotationDelayBetweenBots": 120000,
-    "minBlocksPerMin": 3,
+    "minBlocksPerMin": 350,
+    "speedGuardIntervalMs": 5000,
+    "speedGuardStartGraceMs": 45000,
+    "speedGuardLowRateMs": 25000,
+    "speedGuardRecoveryCooldownMs": 15000,
+    "speedGuardTargetRatio": 0.82,
+    "speedGuardMinBlocksPerMin": 350,
+    "speedGuardMinLearnRate": 450,
+    "speedGuardButtonIdleMs": 12000,
+    "speedGuardNoProgressReconnectMs": 35000,
+    "speedGuardReconnectAfterRecoveries": 3,
     "stuckRecoveryMs": 60000
   },
   "antibot": {
@@ -139,7 +149,8 @@
     "enableMetrics": true,
     "enablePerBotLogs": true,
     "enableLazyRotation": false,
-    "enablePeriodicRotation": false
+    "enablePeriodicRotation": false,
+    "enableSpeedGuard": true
   },
   "logging": {
     "level": "info",
@@ -148,8 +159,10 @@
     "debugMode": false,
     "detailedEvents": false,
     "logServerMessages": false,
-    "diagnosticMaxValueLength": 3000,
-    "diagnosticPositionIntervalMs": 30000
+    "diagnosticMaxValueLength": 1400,
+    "diagnosticPositionIntervalMs": 30000,
+    "diagnosticRepeatSummaryMs": 30000,
+    "diagnosticFullPacketDetails": false
   },
   "pause": {
     "file": "pause.txt",

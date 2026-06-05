@@ -2,7 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#091524" />
     <title>ProstoCraft Bot Studio</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -12,12 +12,8 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand-card">
-          <div class="brand-orbit"></div>
-          <p class="eyebrow">Adaptive control center</p>
+          <p class="eyebrow">Control center</p>
           <h1>ProstoCraft Bot Studio</h1>
-          <p class="brand-copy">
-            Единый пульт для desktop и Android: настройка ботов, маршрутов добычи и конфигурации без ручного редактирования JSON.
-          </p>
         </div>
 
         <nav class="nav-list" aria-label="Основная навигация">
@@ -25,6 +21,7 @@
           <button class="nav-item" data-tab="bots">Боты</button>
           <button class="nav-item" data-tab="settings">Настройки</button>
           <button class="nav-item" data-tab="logs">Логи</button>
+          <button class="nav-item" data-tab="chat">Чат</button>
         </nav>
 
         <div class="sidebar-card">
@@ -66,11 +63,6 @@
             <p id="hero-copy" class="muted-copy">
               Добавляйте ботов, задавайте координаты блоков и запускайте весь пул одним нажатием.
             </p>
-            <div class="hero-tags">
-              <span class="chip">Android-ready UI</span>
-              <span class="chip">Адаптивная навигация</span>
-              <span class="chip">Щадящий рендер</span>
-            </div>
           </article>
 
           <div id="summary-cards" class="summary-grid"></div>
@@ -155,6 +147,20 @@
 
             <div id="log-stream" class="log-stream"></div>
           </section>
+
+          <section id="chat-panel" class="panel tab-panel" data-panel="chat">
+            <div class="panel-header panel-header--spread">
+              <div>
+                <p class="eyebrow">Chat stream</p>
+                <h3>Лог чата</h3>
+              </div>
+              <div class="inline-actions">
+                <span id="chat-log-counter" class="chip">0 записей</span>
+              </div>
+            </div>
+
+            <div id="chat-log-stream" class="log-stream"></div>
+          </section>
         </section>
       </main>
 
@@ -163,8 +169,9 @@
       <nav class="mobile-nav no-drag" aria-label="Быстрая навигация">
         <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
         <button class="nav-item" data-tab="bots">Боты</button>
-        <button class="nav-item" data-tab="settings">Настройки</button>
+        <button class="nav-item" data-tab="settings">Настр.</button>
         <button class="nav-item" data-tab="logs">Логи</button>
+        <button class="nav-item" data-tab="chat">Чат</button>
       </nav>
     </div>
 

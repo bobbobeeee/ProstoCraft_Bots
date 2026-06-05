@@ -36,7 +36,7 @@ https://github.com/merrobocop/ProstoCraft_Bots/releases
 Локальный runtime-файл:
 
 ```text
-C:\Users\Ilya\AppData\Roaming\autominerv2\runtime\bot.log
+%APPDATA%\autominerv2\runtime\bot.log
 ```
 
 ## Проверка скорости

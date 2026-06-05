@@ -11,6 +11,7 @@ yarn-debug.log*
 yarn-error.log*
 tools/android-sdk/
 tools/gradle-*/
+tools/jdk-*/
 tools/*.zip
 *.log
 *.p12
