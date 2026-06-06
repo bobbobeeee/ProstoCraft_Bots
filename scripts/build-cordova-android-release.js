@@ -5,11 +5,14 @@ const { spawnSync } = require('child_process')
 const projectRoot = path.resolve(__dirname, '..')
 const cordovaRoot = path.join(projectRoot, 'mobile-cordova')
 const gradleProjectRoot = path.join(cordovaRoot, 'platforms', 'android')
-const gradleWrapper = path.join(
-  gradleProjectRoot,
-  'tools',
-  process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'
-)
+const gradleWrapperName = process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'
+const gradleExecutableName = process.platform === 'win32' ? 'gradle.bat' : 'gradle'
+const gradleWrapperCandidates = [
+  path.join(gradleProjectRoot, 'tools', gradleWrapperName),
+  path.join(gradleProjectRoot, gradleWrapperName),
+  path.join(projectRoot, 'tools', 'gradle-8.14.2', 'bin', gradleExecutableName)
+]
+const gradleCommand = gradleWrapperCandidates.find(candidatePath => fs.existsSync(candidatePath)) || gradleExecutableName
 const gradleUserHome = path.join(projectRoot, '.gradle-home')
 const defaultAndroidSdkRoot = path.join(projectRoot, 'tools', 'android-sdk')
 const defaultOutputDir = path.join(projectRoot, 'dist-android')
@@ -59,6 +62,36 @@ function ensurePathExists(targetPath, description) {
   }
 }
 
+function findExecutableInDir(dirPath, baseName) {
+  const executableName = process.platform === 'win32' ? `${baseName}.bat` : baseName
+  const candidatePath = path.join(dirPath, executableName)
+  return fs.existsSync(candidatePath) ? candidatePath : null
+}
+
+function resolveAndroidBuildTool(androidSdkRoot, baseName) {
+  const buildToolsRoot = path.join(androidSdkRoot, 'build-tools')
+  ensurePathExists(buildToolsRoot, 'Android build-tools')
+
+  const versions = fs.readdirSync(buildToolsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
+
+  for (const version of versions) {
+    const executablePath = findExecutableInDir(path.join(buildToolsRoot, version), baseName)
+    if (executablePath) return executablePath
+  }
+
+  throw new Error(`${baseName} was not found in Android build-tools: ${buildToolsRoot}`)
+}
+
+function resolveKeytool(javaHome) {
+  const executableName = process.platform === 'win32' ? 'keytool.exe' : 'keytool'
+  const keytoolPath = path.join(javaHome, 'bin', executableName)
+  ensurePathExists(keytoolPath, 'Java keytool')
+  return keytoolPath
+}
+
 function normalizeSpawn(command, args) {
   if (process.platform !== 'win32' || !/\.(bat|cmd)$/i.test(command)) {
     return { command, args }
@@ -95,7 +128,7 @@ function run(command, args, options = {}) {
 
 function stopGradle(env) {
   const result = spawnChecked(
-    gradleWrapper,
+    gradleCommand,
     ['-p', gradleProjectRoot, '--stop', '--console=plain'],
     {
       cwd: projectRoot,
@@ -147,6 +180,70 @@ function syncSigningConfigPaths() {
       : `${current.trimEnd()}\n${keystoreLine}\n`
     fs.writeFileSync(releaseSigningProperties, next)
   }
+}
+
+function findBuiltReleaseApk(releaseOutputDir) {
+  ensurePathExists(releaseOutputDir, 'Release APK directory')
+
+  const apks = fs.readdirSync(releaseOutputDir)
+    .filter(fileName => /\.apk$/i.test(fileName))
+    .map(fileName => path.join(releaseOutputDir, fileName))
+
+  const preferredNames = [
+    'app-release.apk',
+    'app-release-signed.apk',
+    'app-release-unsigned.apk'
+  ]
+
+  for (const preferredName of preferredNames) {
+    const match = apks.find(apkPath => path.basename(apkPath).toLowerCase() === preferredName)
+    if (match) return match
+  }
+
+  if (apks.length > 0) return apks[0]
+  throw new Error(`No release APK was found in ${releaseOutputDir}`)
+}
+
+function signUnsignedApkIfNeeded(sourceApk, androidSdkRoot, javaHome, env) {
+  if (!/-unsigned\.apk$/i.test(path.basename(sourceApk))) {
+    return sourceApk
+  }
+
+  const fallbackKeystore = path.join(gradleUserHome, 'prostocraft-ci-release.keystore')
+  const signedApk = path.join(path.dirname(sourceApk), 'app-release-ci-signed.apk')
+  const fallbackAlias = 'prostocraft-ci-release'
+  const fallbackPassword = 'prostocraft-ci-release'
+  const keytool = resolveKeytool(javaHome)
+  const apksigner = resolveAndroidBuildTool(androidSdkRoot, 'apksigner')
+
+  fs.mkdirSync(path.dirname(fallbackKeystore), { recursive: true })
+
+  if (!fs.existsSync(fallbackKeystore)) {
+    run(keytool, [
+      '-genkeypair',
+      '-v',
+      '-keystore', fallbackKeystore,
+      '-storepass', fallbackPassword,
+      '-keypass', fallbackPassword,
+      '-alias', fallbackAlias,
+      '-keyalg', 'RSA',
+      '-keysize', '2048',
+      '-validity', '10000',
+      '-dname', 'CN=ProstoCraft Bot Studio CI,O=ProstoCraft Bot Studio,C=US'
+    ], { cwd: projectRoot, env })
+  }
+
+  run(apksigner, [
+    'sign',
+    '--ks', fallbackKeystore,
+    '--ks-key-alias', fallbackAlias,
+    '--ks-pass', `pass:${fallbackPassword}`,
+    '--key-pass', `pass:${fallbackPassword}`,
+    '--out', signedApk,
+    sourceApk
+  ], { cwd: projectRoot, env })
+
+  return signedApk
 }
 
 function writeFileIfMissing(filePath, contents) {
@@ -238,7 +335,9 @@ function ensureCordovaAndroidResources() {
 
 function main() {
   ensurePathExists(cordovaRoot, 'Cordova project')
-  ensurePathExists(gradleWrapper, 'Gradle wrapper')
+  if (path.isAbsolute(gradleCommand)) {
+    ensurePathExists(gradleCommand, 'Gradle command')
+  }
 
   const androidSdkRoot = process.env.ANDROID_SDK_ROOT || process.env.ANDROID_HOME || defaultAndroidSdkRoot
   const javaHome = resolveJavaHome()
@@ -270,7 +369,7 @@ function main() {
   cleanBuildDirectories()
 
   run(
-    gradleWrapper,
+    gradleCommand,
     ['-p', gradleProjectRoot, 'cdvBuildRelease', '--console=plain'],
     {
       cwd: projectRoot,
@@ -278,17 +377,21 @@ function main() {
     }
   )
 
-  const sourceApk = path.join(
+  const releaseOutputDir = path.join(
     gradleProjectRoot,
     'app',
     'build',
     'outputs',
     'apk',
-    'release',
-    'app-release.apk'
+    'release'
   )
 
-  ensurePathExists(sourceApk, 'Release APK')
+  const sourceApk = signUnsignedApkIfNeeded(
+    findBuiltReleaseApk(releaseOutputDir),
+    androidSdkRoot,
+    javaHome,
+    env
+  )
 
   cleanOutputApks()
   fs.copyFileSync(sourceApk, defaultOutputApk)

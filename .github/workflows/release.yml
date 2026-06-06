@@ -30,6 +30,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.2
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -44,6 +49,10 @@ jobs:
       - name: Install Cordova dependencies
         working-directory: mobile-cordova
         run: npm ci
+
+      - name: Install mobile runtime dependencies
+        working-directory: mobile-cordova/nodejs-project
+        run: npm ci --omit=dev
 
       - name: Prepare Cordova Android platform
         working-directory: mobile-cordova
