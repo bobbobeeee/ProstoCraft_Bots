@@ -84,7 +84,8 @@
     "speedGuardButtonIdleMs": 12000,
     "speedGuardNoProgressReconnectMs": 20000,
     "speedGuardReconnectAfterRecoveries": 2,
-    "stuckRecoveryMs": 60000
+    "stuckRecoveryMs": 60000,
+    "speedGuardAllowedDropPercent": 10
   },
   "antibot": {
     "minInterval": 3000,

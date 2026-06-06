@@ -36,6 +36,19 @@ function recordSpeedGuardProgress(profile, now = Date.now()) {
   return target
 }
 
+function getRobustPeakRate(samples) {
+  const rates = samples
+    .map(sample => Number(sample.ratePerMinute) || 0)
+    .filter(rate => Number.isFinite(rate) && rate > 0)
+    .sort((a, b) => a - b)
+
+  if (rates.length === 0) return 0
+  if (rates.length <= 3) return rates[rates.length - 1]
+
+  const index = Math.floor((rates.length - 1) * 0.8)
+  return rates[index]
+}
+
 function pruneRateSamples(profile, now, memoryMs) {
   const target = normalizeProfile(profile)
   const cutoff = Number(now) - Math.max(1000, Number(memoryMs) || 1000)
@@ -45,10 +58,7 @@ function pruneRateSamples(profile, now, memoryMs) {
     Number.isFinite(Number(sample.at)) &&
     Number(sample.at) >= cutoff
   ))
-  target.peakRatePerMinute = target.rateSamples.reduce(
-    (peak, sample) => Math.max(peak, Number(sample.ratePerMinute) || 0),
-    0
-  )
+  target.peakRatePerMinute = getRobustPeakRate(target.rateSamples)
   return target
 }
 
@@ -61,7 +71,7 @@ function rememberSpeedGuardPeak(profile, ratePerMinute, now = Date.now(), memory
     pruneRateSamples(target, timestamp, memoryMs)
   }
 
-  if (Number.isFinite(rate) && rate > 0 && rate > target.peakRatePerMinute) {
+  if (Number.isFinite(rate) && rate > 0) {
     target.rateSamples.push({ at: Number.isFinite(timestamp) ? timestamp : Date.now(), ratePerMinute: rate })
     pruneRateSamples(target, Number.isFinite(timestamp) ? timestamp : Date.now(), memoryMs)
   }
@@ -76,6 +86,17 @@ function getSpeedGuardTargetRate(profile, targetRatio) {
   return target.peakRatePerMinute > 0
     ? target.peakRatePerMinute * ratio
     : 0
+}
+
+function getSpeedGuardTargetRatioFromDropPercent(dropPercent, fallbackRatio = 0.9) {
+  const percent = Number(dropPercent)
+  if (Number.isFinite(percent)) {
+    const clampedPercent = Math.min(50, Math.max(1, percent))
+    return 1 - (clampedPercent / 100)
+  }
+
+  const ratio = Number(fallbackRatio)
+  return Math.min(0.99, Math.max(0.5, Number.isFinite(ratio) ? ratio : 0.9))
 }
 
 function getAdaptiveRateWindowMs(profile, baseWindowMs) {
@@ -101,7 +122,9 @@ module.exports = {
   createSpeedGuardProfile,
   getAdaptiveRateWindowMs,
   getAdaptiveWaitMs,
+  getRobustPeakRate,
   getSpeedGuardTargetRate,
+  getSpeedGuardTargetRatioFromDropPercent,
   pruneRateSamples,
   recordSpeedGuardProgress,
   rememberSpeedGuardPeak

@@ -362,6 +362,12 @@ const BOT_SETTINGS_SECTIONS_V2 = [
         kind: 'number',
         label: 'Пауза между ботами (мс)',
         help: 'Задержка между последовательным запуском или ротацией ботов, чтобы не создавать резких пиков нагрузки.'
+      },
+      {
+        path: 'timing.speedGuardAllowedDropPercent',
+        kind: 'number',
+        label: 'Максимальная просадка скорости (%)',
+        help: 'На сколько процентов скорость может упасть от адаптивной нормы перед восстановлением. 10%: 750 б/м -> порог 675 б/м.'
       }
     ]
   },
@@ -514,6 +520,7 @@ const VISIBLE_CONFIG_SETTING_PATHS = new Set([
   'server.password',
   'timing.periodicRejoinMs',
   'timing.rotationDelayBetweenBots',
+  'timing.speedGuardAllowedDropPercent',
   'menu.slot1',
   'menu.slot2',
   'menu.hotbarSlot',

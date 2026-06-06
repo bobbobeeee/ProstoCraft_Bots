@@ -3,7 +3,9 @@ const {
   createSpeedGuardProfile,
   getAdaptiveRateWindowMs,
   getAdaptiveWaitMs,
+  getRobustPeakRate,
   getSpeedGuardTargetRate,
+  getSpeedGuardTargetRatioFromDropPercent,
   recordSpeedGuardProgress,
   rememberSpeedGuardPeak
 } = require('./speed-guard')
@@ -22,6 +24,22 @@ const {
   assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 5000, 10000), 100)
   assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 12000, 10000), 50)
   assert.strictEqual(getSpeedGuardTargetRate(profile, 0.9), 45)
+}
+
+{
+  assert.strictEqual(getSpeedGuardTargetRatioFromDropPercent(10), 0.9)
+  assert.strictEqual(getSpeedGuardTargetRatioFromDropPercent(7), 0.9299999999999999)
+  assert.strictEqual(getSpeedGuardTargetRatioFromDropPercent(undefined, 0.88), 0.88)
+}
+
+{
+  assert.strictEqual(getRobustPeakRate([
+    { ratePerMinute: 700 },
+    { ratePerMinute: 710 },
+    { ratePerMinute: 720 },
+    { ratePerMinute: 1000 },
+    { ratePerMinute: 715 }
+  ]), 720)
 }
 
 {

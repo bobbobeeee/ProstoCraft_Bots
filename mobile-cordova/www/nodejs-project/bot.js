@@ -19,6 +19,7 @@ const {
   getAdaptiveRateWindowMs,
   getAdaptiveWaitMs,
   getSpeedGuardTargetRate,
+  getSpeedGuardTargetRatioFromDropPercent,
   recordSpeedGuardProgress,
   rememberSpeedGuardPeak: rememberAdaptiveSpeedGuardPeak
 } = require('./speed-guard')
@@ -619,7 +620,11 @@ const SPEED_GUARD_INTERVAL_MS = Math.max(1000, Number(config.timing?.speedGuardI
 const SPEED_GUARD_START_GRACE_MS = Math.max(15000, Number(config.timing?.speedGuardStartGraceMs ?? 45000) || 45000)
 const SPEED_GUARD_LOW_RATE_MS = Math.max(SPEED_GUARD_INTERVAL_MS, Number(config.timing?.speedGuardLowRateMs ?? 25000) || 25000)
 const SPEED_GUARD_RECOVERY_COOLDOWN_MS = Math.max(5000, Number(config.timing?.speedGuardRecoveryCooldownMs ?? 15000) || 15000)
-const SPEED_GUARD_TARGET_RATIO = Math.min(0.95, Math.max(0.5, Number(config.timing?.speedGuardTargetRatio ?? 0.82) || 0.82))
+const SPEED_GUARD_ALLOWED_DROP_PERCENT = Math.min(50, Math.max(1, Number(config.timing?.speedGuardAllowedDropPercent ?? 10) || 10))
+const SPEED_GUARD_TARGET_RATIO = getSpeedGuardTargetRatioFromDropPercent(
+  config.timing?.speedGuardAllowedDropPercent,
+  config.timing?.speedGuardTargetRatio ?? 0.9
+)
 const SPEED_GUARD_RATE_WINDOW_MS = Math.max(SPEED_WINDOW_MS, Number(config.timing?.speedGuardRateWindowMs ?? 30000) || 30000)
 const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
 const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
@@ -1819,7 +1824,7 @@ function createBot(cfg) {
   }
 
   function getSpeedGuardLowRateMs() {
-    return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_LOW_RATE_MS, 2)
+    return Math.max(getSpeedGuardRateWindowMs(), getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_LOW_RATE_MS, 2))
   }
 
   function getSpeedGuardButtonIdleMs() {
@@ -1846,22 +1851,36 @@ function createBot(cfg) {
 
   async function recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot) {
     const now = Date.now()
-    if (now - speedGuardLastRecoveryAt < SPEED_GUARD_RECOVERY_COOLDOWN_MS) return
-
-    speedGuardLastRecoveryAt = now
-    speedGuardRecoveries += 1
-    const recoveryAttempt = Math.min(speedGuardRecoveries, SPEED_GUARD_RECONNECT_AFTER_RECOVERIES)
     const buttonIdleMs = getSpeedGuardButtonIdleMs()
     const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
 
     const idleFor = getMiningProgressAgeMs(now)
     const emptyTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'empty')
     const unloadedTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
+    const activeProgress = Number.isFinite(idleFor) && idleFor < Math.min(buttonIdleMs, noProgressReconnectMs)
+    const speedDropExceeded = targetRate > 0 && currentRate < targetRate
+    if (activeProgress && !emptyTargets && !unloadedTargets && digLoopRunning && !speedDropExceeded) {
+      diagEvent('speed-guard-active-progress-hold', {
+        currentRate,
+        targetRate,
+        allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
+        idleFor,
+        targets: snapshot?.all?.map(formatTargetSnapshot)
+      })
+      return
+    }
+
+    if (now - speedGuardLastRecoveryAt < SPEED_GUARD_RECOVERY_COOLDOWN_MS) return
+
+    speedGuardLastRecoveryAt = now
+    speedGuardRecoveries += 1
+    const recoveryAttempt = Math.min(speedGuardRecoveries, SPEED_GUARD_RECONNECT_AFTER_RECOVERIES)
     const rateText = `${Math.round(currentRate)}<${Math.round(targetRate)} б/м`
     const shouldLogRecoveryWarning =
       emptyTargets ||
       unloadedTargets ||
       !digLoopRunning ||
+      speedDropExceeded ||
       (Number.isFinite(idleFor) && idleFor >= 3000)
 
     if (shouldLogRecoveryWarning) {
@@ -1879,6 +1898,9 @@ function createBot(cfg) {
       idleFor,
       buttonIdleMs,
       noProgressReconnectMs,
+      activeProgress,
+      speedDropExceeded,
+      allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
       recoveries: speedGuardRecoveries,
       emptyTargets,
       unloadedTargets,
@@ -2045,6 +2067,7 @@ function createBot(cfg) {
       lowRateMs: getSpeedGuardLowRateMs(),
       noProgressReconnectMs: getSpeedGuardNoProgressReconnectMs(),
       targetRatio: SPEED_GUARD_TARGET_RATIO,
+      allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
       peakRate: getSpeedGuardPeak()
     })
   }
