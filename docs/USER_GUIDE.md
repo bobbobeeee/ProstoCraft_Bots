@@ -8,12 +8,12 @@ ProstoCraft Bot Studio - desktop-приложение для запуска и �
 
 Открой страницу скачивания:
 
-https://github.com/merrobocop/ProstoCraft_Bots/releases/latest
+https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest
 
 Скачай один из файлов:
 
-- `ProstoCraft.Bot.Studio-Setup-2.0.0.exe` - установщик для Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk` - APK для Android.
+- `ProstoCraft.Bot.Studio-Setup-2.0.1.exe` - установщик для Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.1.apk` - APK для Android.
 
 ## Первый запуск
 

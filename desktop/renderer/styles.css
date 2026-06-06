@@ -394,6 +394,7 @@ code {
 .bot-card,
 .bot-editor-card,
 .settings-card,
+.updates-card,
 .path-card,
 .log-entry,
 .modal-card,
@@ -514,6 +515,7 @@ code {
 .bot-list,
 .bot-editor,
 .settings-grid,
+.updates-content,
 .log-stream,
 .coordinates-list,
 .modal-card {
@@ -1065,6 +1067,86 @@ code {
   padding-right: 2px;
 }
 
+.updates-content {
+  display: grid;
+  gap: 12px;
+  flex: 1;
+  align-content: start;
+  padding-right: 2px;
+}
+
+.updates-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.15fr) repeat(4, minmax(150px, 0.75fr));
+  gap: 10px;
+}
+
+.updates-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.updates-card--main {
+  align-content: start;
+}
+
+.updates-card--notes {
+  min-height: 0;
+}
+
+.updates-card__top,
+.update-progress__meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.updates-file-name,
+.update-notes {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.update-progress__bar {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #d9e1ed;
+}
+
+.update-progress__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.update-progress__meta {
+  color: var(--muted-dark);
+  font-size: 12px;
+}
+
+.update-notes {
+  max-height: min(34vh, 360px);
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-dark);
+  font: inherit;
+  line-height: 1.45;
+}
+
 .settings-card--section,
 .settings-section-stack,
 .settings-subsection {
@@ -1507,6 +1589,14 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .updates-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .updates-card--main {
+    grid-column: 1 / -1;
+  }
+
   .bot-editor-sections {
     grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
   }
@@ -1700,6 +1790,7 @@ code {
   .bot-editor-layout,
   .bot-editor,
   .settings-grid,
+  .updates-content,
   .log-stream,
   .coordinates-list {
     overflow: visible;
@@ -1709,6 +1800,7 @@ code {
   .dashboard-bot-grid,
   .field-grid,
   .settings-card-grid,
+  .updates-grid,
   .path-grid,
   .coordinate-row {
     grid-template-columns: 1fr;
@@ -1822,6 +1914,7 @@ code {
   .bot-card,
   .bot-editor-card,
   .settings-card,
+  .updates-card,
   .log-entry,
   .modal-card,
   .mini-status-card,

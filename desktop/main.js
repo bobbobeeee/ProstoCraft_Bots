@@ -3,9 +3,17 @@ const { spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 const { applyLegacyConfigMigrations } = require('../config-migrations')
+const {
+  DEFAULT_UPDATE_SOURCES,
+  checkForUpdates,
+  downloadUpdate
+} = require('../update-service')
+const packageMetadata = require('../package.json')
 
 const PRODUCT_NAME = 'ProstoCraft Bot Studio'
 const RUNTIME_DIRNAME = 'runtime'
+const APP_VERSION = packageMetadata.version || '0.0.0'
+const UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]
 const MAX_RECENT_LOGS = 300
 const MAX_RECENT_CHAT_LOGS = 500
 const BOT_EVENT_PREFIX = '@@BOT_EVENT@@'
@@ -25,6 +33,9 @@ let stdoutBuffer = ''
 let stderrBuffer = ''
 let tray = null
 let isQuitting = false
+let latestUpdateInfo = null
+
+let updateState = createEmptyUpdateState()
 
 const runtimeState = {
   status: 'stopped',
@@ -51,6 +62,27 @@ const runtimeState = {
   },
   logs: [],
   chatLogs: []
+}
+
+function createEmptyUpdateState() {
+  return {
+    status: 'idle',
+    currentVersion: APP_VERSION,
+    latestVersion: '',
+    updateAvailable: false,
+    checkedAt: '',
+    publishedAt: '',
+    releaseName: '',
+    releaseUrl: UPDATE_SOURCE.releaseUrl,
+    body: '',
+    asset: null,
+    checksum: null,
+    progress: null,
+    downloadedFilePath: '',
+    downloadedFileName: '',
+    downloadedSize: 0,
+    error: ''
+  }
 }
 
 function getAppRoot() {
@@ -354,6 +386,155 @@ function publishRuntimeState() {
   updateTrayMenu()
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('runtime:state', buildRuntimePayload())
+}
+
+function getUpdatesDir() {
+  return path.join(getRuntimeDir(), 'updates')
+}
+
+function buildUpdatePayload() {
+  return {
+    ...createEmptyUpdateState(),
+    ...updateState,
+    currentVersion: APP_VERSION,
+    releaseUrl: updateState.releaseUrl || UPDATE_SOURCE.releaseUrl
+  }
+}
+
+function publishUpdateState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('updates:state', buildUpdatePayload())
+}
+
+function applyUpdateInfo(updateInfo) {
+  latestUpdateInfo = updateInfo
+  updateState = {
+    ...createEmptyUpdateState(),
+    ...updateInfo,
+    checkedAt: new Date().toISOString(),
+    error: updateInfo?.error || '',
+    progress: null,
+    downloadedFilePath: '',
+    downloadedFileName: '',
+    downloadedSize: 0
+  }
+  return buildUpdatePayload()
+}
+
+async function checkAppUpdates() {
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'checking',
+    error: '',
+    progress: null
+  }
+  publishUpdateState()
+
+  const updateInfo = await checkForUpdates({
+    platform: 'desktop',
+    currentVersion: APP_VERSION
+  })
+  const payload = applyUpdateInfo(updateInfo)
+  publishUpdateState()
+  return payload
+}
+
+async function downloadAppUpdate() {
+  if (!latestUpdateInfo?.asset) {
+    await checkAppUpdates()
+  }
+
+  if (!latestUpdateInfo?.updateAvailable) {
+    throw new Error('Доступного обновления нет.')
+  }
+
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'downloading',
+    error: '',
+    progress: {
+      receivedBytes: 0,
+      totalBytes: latestUpdateInfo.asset.size || 0,
+      percent: 0
+    }
+  }
+  publishUpdateState()
+
+  try {
+    const downloaded = await downloadUpdate(latestUpdateInfo, {
+      outputDir: getUpdatesDir(),
+      onProgress(progress) {
+        const totalBytes = progress.totalBytes || latestUpdateInfo.asset.size || 0
+        const percent = totalBytes > 0
+          ? Math.min(100, Math.round((progress.receivedBytes / totalBytes) * 100))
+          : 0
+
+        updateState = {
+          ...buildUpdatePayload(),
+          status: 'downloading',
+          progress: {
+            receivedBytes: progress.receivedBytes,
+            totalBytes,
+            percent
+          }
+        }
+        publishUpdateState()
+      }
+    })
+
+    updateState = {
+      ...buildUpdatePayload(),
+      status: 'ready',
+      progress: {
+        receivedBytes: downloaded.size,
+        totalBytes: downloaded.size,
+        percent: 100
+      },
+      downloadedFilePath: downloaded.filePath,
+      downloadedFileName: downloaded.fileName,
+      downloadedSize: downloaded.size,
+      error: ''
+    }
+    publishUpdateState()
+    return buildUpdatePayload()
+  } catch (error) {
+    updateState = {
+      ...buildUpdatePayload(),
+      status: 'error',
+      error: error.message || String(error)
+    }
+    publishUpdateState()
+    throw error
+  }
+}
+
+function installDownloadedUpdate() {
+  const installerPath = updateState.downloadedFilePath
+  if (!installerPath || !fs.existsSync(installerPath)) {
+    throw new Error('Сначала скачайте обновление.')
+  }
+
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'installing',
+    error: ''
+  }
+  publishUpdateState()
+
+  stopRuntime()
+  const child = spawn(installerPath, [], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false
+  })
+  child.unref()
+
+  setTimeout(() => {
+    isQuitting = true
+    app.quit()
+  }, 800)
+
+  return buildUpdatePayload()
 }
 
 function appendRawProcessOutput(source, line) {
@@ -662,16 +843,20 @@ function registerIpcHandlers() {
 
     return {
       platform: 'desktop',
+      appVersion: APP_VERSION,
+      updateSource: UPDATE_SOURCE,
       capabilities: {
         runtimeControl: true,
         runtimeStreaming: true,
         fileImport: true,
         fileExport: true,
-        openRuntimeDir: true
+        openRuntimeDir: true,
+        updates: true
       },
       config,
       desktopSettings,
-      runtime: buildRuntimePayload()
+      runtime: buildRuntimePayload(),
+      updates: buildUpdatePayload()
     }
   })
 
@@ -697,6 +882,10 @@ function registerIpcHandlers() {
     setPauseFile(Boolean(nextPaused))
     return buildRuntimePayload()
   })
+
+  ipcMain.handle('updates:check', () => checkAppUpdates())
+  ipcMain.handle('updates:download', () => downloadAppUpdate())
+  ipcMain.handle('updates:install', () => installDownloadedUpdate())
 
   ipcMain.handle('shell:open-runtime-dir', async () => {
     await shell.openPath(getRuntimeDir())

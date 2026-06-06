@@ -20,6 +20,7 @@
           <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
           <button class="nav-item" data-tab="bots">Боты</button>
           <button class="nav-item" data-tab="settings">Настройки</button>
+          <button class="nav-item" data-tab="updates">Обновления</button>
           <button class="nav-item" data-tab="logs">Логи</button>
           <button class="nav-item" data-tab="chat">Чат</button>
         </nav>
@@ -152,6 +153,23 @@
             <div id="log-stream" class="log-stream"></div>
           </section>
 
+          <section id="updates-panel" class="panel tab-panel" data-panel="updates">
+            <div class="panel-header panel-header--spread">
+              <div>
+                <p class="eyebrow">Update center</p>
+                <h3>Центр обновления</h3>
+              </div>
+              <div class="inline-actions">
+                <button id="check-updates-btn" class="button button--ghost">Проверить</button>
+                <button id="download-update-btn" class="button button--secondary">Скачать</button>
+                <button id="install-update-btn" class="button button--primary">Установить</button>
+                <button id="open-release-btn" class="button button--ghost">Страница версии</button>
+              </div>
+            </div>
+
+            <div id="updates-content" class="updates-content"></div>
+          </section>
+
           <section id="chat-panel" class="panel tab-panel" data-panel="chat">
             <div class="panel-header panel-header--spread">
               <div>
@@ -174,6 +192,7 @@
         <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
         <button class="nav-item" data-tab="bots">Боты</button>
         <button class="nav-item" data-tab="settings">Настр.</button>
+        <button class="nav-item" data-tab="updates">Обнов.</button>
         <button class="nav-item" data-tab="logs">Логи</button>
         <button class="nav-item" data-tab="chat">Чат</button>
       </nav>

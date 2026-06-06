@@ -17,23 +17,23 @@ npm run android:build:release
 
 GitHub Release создаётся автоматически, когда в репозиторий отправляется тег вида `v*`.
 
-Пример для версии `2.0.0`:
+Пример для версии `2.0.1`:
 
 ```powershell
 git status
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
 GitHub Actions соберёт:
 
-- установщик `ProstoCraft.Bot.Studio-Setup-2.0.0.exe`;
-- Android APK `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk`;
+- установщик `ProstoCraft.Bot.Studio-Setup-2.0.1.exe`;
+- Android APK `ProstoCraft.Bot.Studio-Mobile-2.0.1.apk`;
 - файл `SHA256SUMS.txt`.
 
 Готовый релиз появится здесь:
 
-https://github.com/merrobocop/ProstoCraft_Bots/releases
+https://github.com/bobbobeeee/ProstoCraft_Bots/releases
 
 В workflow `electron-builder` запускается с `--publish never`, а загрузку файлов в GitHub Release делает отдельный шаг `softprops/action-gh-release`.
 

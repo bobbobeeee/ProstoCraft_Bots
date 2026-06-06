@@ -12,7 +12,7 @@ const runtimeSource = path.join(projectRoot, 'mobile-cordova-src', 'nodejs-proje
 const runtimeTarget = path.join(rendererTarget, 'nodejs-project')
 const platformRuntimeTarget = path.join(platformRendererTarget, 'nodejs-project')
 const runtimeInstallSource = path.join(cordovaRoot, 'nodejs-project')
-const rootRuntimeFiles = ['bot.js', 'bot-filter.js', 'limbo-filter.js', 'reconnect-policy.js', 'speed-guard.js', 'monitoring.js', 'config.json']
+const rootRuntimeFiles = ['bot.js', 'bot-filter.js', 'limbo-filter.js', 'reconnect-policy.js', 'speed-guard.js', 'monitoring.js', 'update-service.js', 'config.json']
 const cordovaWebRuntimeFiles = ['cordova.js', 'cordova_plugins.js']
 const runtimePrunedDirectories = new Set([
   '.bin',

@@ -4,12 +4,12 @@
 
 ## Скачать последнюю версию
 
-[Открыть страницу скачивания](https://github.com/merrobocop/ProstoCraft_Bots/releases/latest)
+[Открыть страницу скачивания](https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest)
 
 Доступны два варианта:
 
-- `ProstoCraft.Bot.Studio-Setup-2.0.0.exe` - установщик для Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk` - APK для Android.
+- `ProstoCraft.Bot.Studio-Setup-2.0.1.exe` - установщик для Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.1.apk` - APK для Android.
 
 ## Возможности
 

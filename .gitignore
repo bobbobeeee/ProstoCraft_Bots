@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-*/
+release-assets/
 .codex-temp/
 .android-sdk/
 .gradle-home/

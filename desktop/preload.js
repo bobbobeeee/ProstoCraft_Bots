@@ -11,10 +11,18 @@ contextBridge.exposeInMainWorld('botStudio', {
   stopRuntime: () => ipcRenderer.invoke('runtime:stop'),
   restartRuntime: () => ipcRenderer.invoke('runtime:restart'),
   setPaused: nextPaused => ipcRenderer.invoke('runtime:set-paused', nextPaused),
+  checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
   openRuntimeDir: () => ipcRenderer.invoke('shell:open-runtime-dir'),
   onRuntimeState: callback => {
     const listener = (_, payload) => callback(payload)
     ipcRenderer.on('runtime:state', listener)
     return () => ipcRenderer.removeListener('runtime:state', listener)
+  },
+  onUpdateState: callback => {
+    const listener = (_, payload) => callback(payload)
+    ipcRenderer.on('updates:state', listener)
+    return () => ipcRenderer.removeListener('updates:state', listener)
   }
 })

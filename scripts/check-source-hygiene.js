@@ -9,6 +9,7 @@ const SOURCE_FILES = [
   'reconnect-policy.js',
   'speed-guard.js',
   'config-migrations.js',
+  'update-service.js',
   'monitoring.js',
   'monitoring.test.js',
   'bot-filter.test.js',
@@ -16,6 +17,7 @@ const SOURCE_FILES = [
   'reconnect-policy.test.js',
   'speed-guard.test.js',
   'config-migrations.test.js',
+  'update-service.test.js',
   'desktop/main.js',
   'desktop/preload.js',
   'desktop/renderer/app.js',
@@ -42,6 +44,7 @@ const SYNCED_FILE_PAIRS = [
   ['reconnect-policy.js', 'mobile-cordova/www/nodejs-project/reconnect-policy.js'],
   ['speed-guard.js', 'mobile-cordova/www/nodejs-project/speed-guard.js'],
   ['monitoring.js', 'mobile-cordova/www/nodejs-project/monitoring.js'],
+  ['update-service.js', 'mobile-cordova/www/nodejs-project/update-service.js'],
   ['config.json', 'mobile-cordova/www/nodejs-project/config.json'],
   ['config.json', 'android/app/src/main/assets/default-config.json']
 ]

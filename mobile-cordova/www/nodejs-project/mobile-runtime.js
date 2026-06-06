@@ -1,16 +1,27 @@
 const cordova = require('cordova-bridge')
 const fs = require('fs')
 const path = require('path')
+const {
+  DEFAULT_UPDATE_SOURCES,
+  checkForUpdates,
+  compareVersions,
+  downloadUpdate
+} = require('./update-service')
+const packageMetadata = require('./package.json')
 
 const DATA_DIR = cordova.app.datadir()
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const SETTINGS_PATH = path.join(DATA_DIR, 'desktop-settings.json')
 const LOG_PATH = path.join(DATA_DIR, 'bot.log')
 const CHAT_LOG_PATH = path.join(DATA_DIR, 'chat.log')
+const UPDATES_DIR = path.join(DATA_DIR, 'updates')
+const PENDING_UPDATE_PATH = path.join(UPDATES_DIR, 'pending-update.json')
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.json')
 const BOT_ENTRY_PATH = path.join(__dirname, 'bot.js')
 const MONITORING_PATH = path.join(__dirname, 'monitoring.js')
 const SYSTEM_CHANNEL = '_SYSTEM_'
+const APP_VERSION = packageMetadata.version || '0.0.0'
+const UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]
 let nativeBridge = null
 
 try {
@@ -28,6 +39,8 @@ const DEFAULT_DESKTOP_SETTINGS = {
 }
 
 const runtimeState = createEmptyRuntime()
+let latestUpdateInfo = null
+let updateState = createEmptyUpdateState()
 const MAX_RUNTIME_LOGS = 120
 const MAX_RUNTIME_CHAT_LOGS = 180
 const ACTIVE_PUBLISH_INTERVAL_MS = 1500
@@ -41,6 +54,7 @@ let runtimeActive = false
 let runtimeDesired = false
 let needsReload = false
 let keepAliveEnabled = false
+let updateKeepAliveEnabled = false
 let publishTimer = null
 let lastPublishedAt = 0
 let lastRuntimeEventAt = Date.now()
@@ -74,6 +88,7 @@ cordova.app.on('resume', () => {
 })
 
 ensureRuntimeFiles()
+restorePendingUpdateState()
 persistRuntimeLog('Android Node runtime ready.')
 startRuntimeHealthWatchdog()
 publishRuntimeState(true)
@@ -105,12 +120,34 @@ function createEmptyRuntime() {
   }
 }
 
+function createEmptyUpdateState() {
+  return {
+    status: 'idle',
+    currentVersion: APP_VERSION,
+    latestVersion: '',
+    updateAvailable: false,
+    checkedAt: '',
+    publishedAt: '',
+    releaseName: '',
+    releaseUrl: UPDATE_SOURCE.releaseUrl,
+    body: '',
+    asset: null,
+    checksum: null,
+    progress: null,
+    downloadedFilePath: '',
+    downloadedFileName: '',
+    downloadedSize: 0,
+    error: ''
+  }
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
 function ensureRuntimeFiles() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.mkdirSync(UPDATES_DIR, { recursive: true })
 
   if (!fs.existsSync(CONFIG_PATH)) {
     fs.copyFileSync(DEFAULT_CONFIG_PATH, CONFIG_PATH)
@@ -200,7 +237,50 @@ function setAndroidRuntimeKeepAlive(nextEnabled) {
 }
 
 function syncRuntimeKeepAlive() {
-  setAndroidRuntimeKeepAlive(runtimeActive && !runtimeState.isPaused)
+  setAndroidRuntimeKeepAlive((runtimeActive && !runtimeState.isPaused) || updateKeepAliveEnabled)
+}
+
+function setAndroidUpdateKeepAlive(nextEnabled) {
+  updateKeepAliveEnabled = Boolean(nextEnabled)
+  syncRuntimeKeepAlive()
+}
+
+function sendAndroidSystemMessage(message) {
+  if (!nativeBridge || typeof nativeBridge.sendMessage !== 'function') return false
+
+  try {
+    nativeBridge.sendMessage(SYSTEM_CHANNEL, message)
+    return true
+  } catch (error) {
+    persistRuntimeLog(`Android native message error: ${error.message || String(error)}`, 'warning', 'ANDROID')
+    return false
+  }
+}
+
+function notifyAndroidUpdateProgress({ percent, receivedBytes, totalBytes, fileName }) {
+  sendAndroidSystemMessage([
+    'update-download-progress',
+    Math.max(0, Math.min(100, Number(percent) || 0)),
+    Math.max(0, Number(receivedBytes) || 0),
+    Math.max(0, Number(totalBytes) || 0),
+    encodeURIComponent(fileName || latestUpdateInfo?.asset?.name || 'update.apk')
+  ].join('|'))
+}
+
+function notifyAndroidUpdateReady(downloaded) {
+  sendAndroidSystemMessage([
+    'update-ready',
+    encodeURIComponent(downloaded.filePath || ''),
+    encodeURIComponent(downloaded.fileName || '')
+  ].join('|'))
+}
+
+function notifyAndroidUpdateInstalling(apkPath) {
+  sendAndroidSystemMessage(['update-installing', encodeURIComponent(apkPath || '')].join('|'))
+}
+
+function notifyAndroidUpdateClear() {
+  sendAndroidSystemMessage('update-clear')
 }
 
 function persistRuntimeLog(message, level = 'info', botName = 'ANDROID') {
@@ -252,6 +332,241 @@ function publishRuntimeState(force = false) {
   publishTimer = setTimeout(() => {
     flushRuntimeStatePublish()
   }, Math.max(0, intervalMs - elapsedMs))
+}
+
+function buildUpdatePayload() {
+  return {
+    ...createEmptyUpdateState(),
+    ...updateState,
+    currentVersion: APP_VERSION,
+    releaseUrl: updateState.releaseUrl || UPDATE_SOURCE.releaseUrl
+  }
+}
+
+function publishUpdateState() {
+  cordova.channel.post('bridge:event', {
+    type: 'updates',
+    payload: clone(buildUpdatePayload())
+  })
+}
+
+function clearPendingUpdateState() {
+  try {
+    fs.rmSync(PENDING_UPDATE_PATH, { force: true })
+  } catch (error) {}
+
+  notifyAndroidUpdateClear()
+  setAndroidUpdateKeepAlive(false)
+}
+
+function writePendingUpdateState(downloaded) {
+  const payload = {
+    savedAt: new Date().toISOString(),
+    appVersion: APP_VERSION,
+    updateInfo: latestUpdateInfo,
+    downloaded: {
+      filePath: downloaded.filePath,
+      fileName: downloaded.fileName,
+      size: downloaded.size,
+      sha256: downloaded.sha256
+    }
+  }
+
+  writeJson(PENDING_UPDATE_PATH, payload)
+}
+
+function restorePendingUpdateState() {
+  let pending = null
+
+  try {
+    if (!fs.existsSync(PENDING_UPDATE_PATH)) return false
+    pending = readJson(PENDING_UPDATE_PATH)
+  } catch (error) {
+    clearPendingUpdateState()
+    return false
+  }
+
+  const downloaded = pending?.downloaded || {}
+  if (!downloaded.filePath || !fs.existsSync(downloaded.filePath)) {
+    clearPendingUpdateState()
+    return false
+  }
+
+  const updateInfo = pending.updateInfo || {}
+  if (!updateInfo.updateAvailable || compareVersions(updateInfo.latestVersion, APP_VERSION) <= 0) {
+    clearPendingUpdateState()
+    return false
+  }
+
+  latestUpdateInfo = updateInfo
+  updateState = {
+    ...createEmptyUpdateState(),
+    ...updateInfo,
+    currentVersion: APP_VERSION,
+    status: 'ready',
+    updateAvailable: true,
+    checkedAt: pending.savedAt || new Date().toISOString(),
+    progress: {
+      receivedBytes: downloaded.size || fs.statSync(downloaded.filePath).size,
+      totalBytes: downloaded.size || fs.statSync(downloaded.filePath).size,
+      percent: 100
+    },
+    downloadedFilePath: downloaded.filePath,
+    downloadedFileName: downloaded.fileName,
+    downloadedSize: downloaded.size || fs.statSync(downloaded.filePath).size,
+    error: ''
+  }
+  setAndroidUpdateKeepAlive(true)
+  notifyAndroidUpdateReady(downloaded)
+  return true
+}
+
+function applyUpdateInfo(updateInfo) {
+  latestUpdateInfo = updateInfo
+  updateState = {
+    ...createEmptyUpdateState(),
+    ...updateInfo,
+    checkedAt: new Date().toISOString(),
+    error: updateInfo?.error || '',
+    progress: null,
+    downloadedFilePath: '',
+    downloadedFileName: '',
+    downloadedSize: 0
+  }
+  return buildUpdatePayload()
+}
+
+async function checkMobileUpdates() {
+  if (restorePendingUpdateState()) {
+    publishUpdateState()
+    return buildUpdatePayload()
+  }
+
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'checking',
+    error: '',
+    progress: null
+  }
+  publishUpdateState()
+
+  const updateInfo = await checkForUpdates({
+    platform: 'android',
+    currentVersion: APP_VERSION
+  })
+  const payload = applyUpdateInfo(updateInfo)
+  if (!payload.updateAvailable) {
+    clearPendingUpdateState()
+  }
+  publishUpdateState()
+  return payload
+}
+
+async function downloadMobileUpdate() {
+  if (!latestUpdateInfo?.asset) {
+    await checkMobileUpdates()
+  }
+
+  if (!latestUpdateInfo?.updateAvailable) {
+    throw new Error('Доступного обновления нет.')
+  }
+
+  setAndroidUpdateKeepAlive(true)
+  notifyAndroidUpdateProgress({
+    percent: 0,
+    receivedBytes: 0,
+    totalBytes: latestUpdateInfo.asset.size || 0,
+    fileName: latestUpdateInfo.asset.name
+  })
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'downloading',
+    error: '',
+    progress: {
+      receivedBytes: 0,
+      totalBytes: latestUpdateInfo.asset.size || 0,
+      percent: 0
+    }
+  }
+  publishUpdateState()
+
+  try {
+    const downloaded = await downloadUpdate(latestUpdateInfo, {
+      outputDir: UPDATES_DIR,
+      onProgress(progress) {
+        const totalBytes = progress.totalBytes || latestUpdateInfo.asset.size || 0
+        const percent = totalBytes > 0
+          ? Math.min(100, Math.round((progress.receivedBytes / totalBytes) * 100))
+          : 0
+        updateState = {
+          ...buildUpdatePayload(),
+          status: 'downloading',
+          progress: {
+            receivedBytes: progress.receivedBytes,
+            totalBytes,
+            percent
+          }
+        }
+        notifyAndroidUpdateProgress({
+          percent,
+          receivedBytes: progress.receivedBytes,
+          totalBytes,
+          fileName: latestUpdateInfo.asset.name
+        })
+        publishUpdateState()
+      }
+    })
+
+    writePendingUpdateState(downloaded)
+    updateState = {
+      ...buildUpdatePayload(),
+      status: 'ready',
+      progress: {
+        receivedBytes: downloaded.size,
+        totalBytes: downloaded.size,
+        percent: 100
+      },
+      downloadedFilePath: downloaded.filePath,
+      downloadedFileName: downloaded.fileName,
+      downloadedSize: downloaded.size,
+      error: ''
+    }
+    setAndroidUpdateKeepAlive(true)
+    notifyAndroidUpdateReady(downloaded)
+    publishUpdateState()
+    return buildUpdatePayload()
+  } catch (error) {
+    updateState = {
+      ...buildUpdatePayload(),
+      status: 'error',
+      error: error.message || String(error)
+    }
+    clearPendingUpdateState()
+    publishUpdateState()
+    throw error
+  }
+}
+
+function installMobileUpdate() {
+  const apkPath = updateState.downloadedFilePath
+  if (!apkPath || !fs.existsSync(apkPath)) {
+    throw new Error('Сначала скачайте APK обновления.')
+  }
+
+  if (!nativeBridge || typeof nativeBridge.sendMessage !== 'function') {
+    throw new Error('Android installer bridge is unavailable.')
+  }
+
+  setAndroidUpdateKeepAlive(true)
+  notifyAndroidUpdateInstalling(apkPath)
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'installing',
+    error: ''
+  }
+  publishUpdateState()
+  nativeBridge.sendMessage(SYSTEM_CHANNEL, `install-apk|${apkPath}`)
+  return buildUpdatePayload()
 }
 
 function respond(requestId, payload = null, error = null) {
@@ -353,16 +668,20 @@ function startRuntimeHealthWatchdog() {
 function buildBootstrap() {
   return {
     platform: 'android',
+    appVersion: APP_VERSION,
+    updateSource: UPDATE_SOURCE,
     capabilities: {
       runtimeControl: true,
       runtimeStreaming: true,
       fileImport: false,
       fileExport: false,
-      openRuntimeDir: false
+      openRuntimeDir: false,
+      updates: true
     },
     config: readConfig(),
     desktopSettings: readDesktopSettings(),
-    runtime: clone(runtimeState)
+    runtime: clone(runtimeState),
+    updates: clone(buildUpdatePayload())
   }
 }
 
@@ -395,7 +714,7 @@ function handleBotEvent(type, payload = {}) {
   publishRuntimeState()
 }
 
-function handleRequest(request) {
+async function handleRequest(request) {
   try {
     ensureRuntimeFiles()
 
@@ -496,6 +815,18 @@ function handleRequest(request) {
         respond(request.requestId, clone(runtimeState))
         return
       }
+
+      case 'checkUpdates':
+        respond(request.requestId, await checkMobileUpdates())
+        return
+
+      case 'downloadUpdate':
+        respond(request.requestId, await downloadMobileUpdate())
+        return
+
+      case 'installUpdate':
+        respond(request.requestId, installMobileUpdate())
+        return
 
       default:
         respond(request.requestId, null, `Unknown action: ${request.action}`)

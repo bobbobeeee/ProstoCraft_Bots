@@ -194,7 +194,29 @@
     runtimeStreaming: true,
     fileImport: true,
     fileExport: true,
-    openRuntimeDir: true
+    openRuntimeDir: true,
+    updates: false
+  }
+
+  function createEmptyUpdateState() {
+    return {
+      status: 'idle',
+      currentVersion: '0.0.0',
+      latestVersion: '',
+      updateAvailable: false,
+      checkedAt: '',
+      publishedAt: '',
+      releaseName: '',
+      releaseUrl: '',
+      body: '',
+      asset: null,
+      checksum: null,
+      progress: null,
+      downloadedFilePath: '',
+      downloadedFileName: '',
+      downloadedSize: 0,
+      error: ''
+    }
   }
 
   function clone(value) {
@@ -254,7 +276,13 @@
       runtime: {
         ...createEmptyRuntime(),
         ...(payload?.runtime || {})
-      }
+      },
+      updates: {
+        ...createEmptyUpdateState(),
+        ...(payload?.updates || {})
+      },
+      appVersion: payload?.appVersion || payload?.updates?.currentVersion || '0.0.0',
+      updateSource: payload?.updateSource || null
     }
   }
 
@@ -278,13 +306,18 @@
       stopRuntime: () => nativeBridge.stopRuntime(),
       restartRuntime: () => nativeBridge.restartRuntime(),
       setPaused: nextPaused => nativeBridge.setPaused(nextPaused),
+      checkUpdates: () => nativeBridge.checkUpdates(),
+      downloadUpdate: () => nativeBridge.downloadUpdate(),
+      installUpdate: () => nativeBridge.installUpdate(),
       openRuntimeDir: () => nativeBridge.openRuntimeDir(),
-      onRuntimeState: callback => nativeBridge.onRuntimeState(callback)
+      onRuntimeState: callback => nativeBridge.onRuntimeState(callback),
+      onUpdateState: callback => nativeBridge.onUpdateState(callback)
     }
   }
 
   function createCordovaBridge() {
     const runtimeListeners = new Set()
+    const updateListeners = new Set()
     const pendingRequests = new Map()
     let requestId = 0
     let startupPromise = null
@@ -339,8 +372,12 @@
       })
 
       window.nodejs.channel.on('bridge:event', message => {
-        if (!message || message.type !== 'runtime') return
-        runtimeListeners.forEach(listener => listener(message.payload))
+        if (!message) return
+        if (message.type === 'runtime') {
+          runtimeListeners.forEach(listener => listener(message.payload))
+        } else if (message.type === 'updates') {
+          updateListeners.forEach(listener => listener(message.payload))
+        }
       })
     }
 
@@ -404,10 +441,17 @@
       stopRuntime: () => sendRequest('stopRuntime'),
       restartRuntime: () => sendRequest('restartRuntime'),
       setPaused: nextPaused => sendRequest('setPaused', { nextPaused }),
+      checkUpdates: () => sendRequest('checkUpdates'),
+      downloadUpdate: () => sendRequest('downloadUpdate'),
+      installUpdate: () => sendRequest('installUpdate'),
       openRuntimeDir: () => Promise.resolve(null),
       onRuntimeState(callback) {
         runtimeListeners.add(callback)
         return () => runtimeListeners.delete(callback)
+      },
+      onUpdateState(callback) {
+        updateListeners.add(callback)
+        return () => updateListeners.delete(callback)
       }
     }
   }
@@ -456,7 +500,8 @@
             runtimeStreaming: false,
             fileImport: false,
             fileExport: false,
-            openRuntimeDir: false
+            openRuntimeDir: false,
+            updates: false
           }
         })
       },
@@ -507,12 +552,24 @@
       async setPaused(nextPaused) {
         return parseNativeJson(callNative('setPaused', String(nextPaused)), createEmptyRuntime())
       },
+      async checkUpdates() {
+        return createEmptyUpdateState()
+      },
+      async downloadUpdate() {
+        return createEmptyUpdateState()
+      },
+      async installUpdate() {
+        return createEmptyUpdateState()
+      },
       async openRuntimeDir() {
         return parseNativeJson(callNative('openRuntimeDir'), createEmptyRuntime())
       },
       onRuntimeState(callback) {
         listeners.add(callback)
         return () => listeners.delete(callback)
+      },
+      onUpdateState() {
+        return () => {}
       }
     }
   }
@@ -536,8 +593,14 @@
       stopRuntime: rejectUnavailable,
       restartRuntime: rejectUnavailable,
       setPaused: rejectUnavailable,
+      checkUpdates: rejectUnavailable,
+      downloadUpdate: rejectUnavailable,
+      installUpdate: rejectUnavailable,
       openRuntimeDir: rejectUnavailable,
       onRuntimeState() {
+        return () => {}
+      },
+      onUpdateState() {
         return () => {}
       }
     }
@@ -639,12 +702,27 @@
       const bridge = await getBridgeWithRetry()
       return bridge.setPaused(nextPaused)
     },
+    async checkUpdates() {
+      const bridge = await getBridgeWithRetry()
+      return bridge.checkUpdates()
+    },
+    async downloadUpdate() {
+      const bridge = await getBridgeWithRetry()
+      return bridge.downloadUpdate()
+    },
+    async installUpdate() {
+      const bridge = await getBridgeWithRetry()
+      return bridge.installUpdate()
+    },
     async openRuntimeDir() {
       const bridge = await getBridgeWithRetry()
       return bridge.openRuntimeDir()
     },
     onRuntimeState(callback) {
       return resolveBridge().onRuntimeState(callback)
+    },
+    onUpdateState(callback) {
+      return resolveBridge().onUpdateState(callback)
     }
   }
 })()

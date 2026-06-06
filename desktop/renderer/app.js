@@ -554,13 +554,19 @@ const state = {
     runtimeStreaming: true,
     fileImport: true,
     fileExport: true,
-    openRuntimeDir: true
+    openRuntimeDir: true,
+    updates: false
   },
+  appVersion: '0.0.0',
+  updateSource: null,
+  updates: createEmptyUpdateState(),
   activeTab: 'dashboard',
   selectedBotIndex: 0,
   isDirty: false,
   coordinateModalOpen: false,
-  unsubscribeRuntime: null
+  unsubscribeRuntime: null,
+  unsubscribeUpdates: null,
+  updateAutoCheckStarted: false
 }
 
 const bridge = window.botStudioBridge || window.botStudio
@@ -602,6 +608,27 @@ function createDefaultDesktopSettings() {
   }
 }
 
+function createEmptyUpdateState() {
+  return {
+    status: 'idle',
+    currentVersion: '0.0.0',
+    latestVersion: '',
+    updateAvailable: false,
+    checkedAt: '',
+    publishedAt: '',
+    releaseName: '',
+    releaseUrl: '',
+    body: '',
+    asset: null,
+    checksum: null,
+    progress: null,
+    downloadedFilePath: '',
+    downloadedFileName: '',
+    downloadedSize: 0,
+    error: ''
+  }
+}
+
 function createDefaultEntryButton() {
   return {
     enabled: false,
@@ -618,6 +645,7 @@ function normalizeCapabilities(capabilities = {}) {
     fileImport: true,
     fileExport: true,
     openRuntimeDir: true,
+    updates: false,
     ...capabilities
   }
 }
@@ -682,6 +710,7 @@ function flushRenderQueue() {
   if (nextParts.has('settings')) renderSettingsV2()
   if (nextParts.has('validation')) renderValidation()
   if (nextParts.has('logs')) renderLogs()
+  if (nextParts.has('updates')) renderUpdates()
   if (nextParts.has('chat')) renderChatLogs()
 }
 
@@ -838,6 +867,34 @@ function formatNumber(value, fractionDigits = 0) {
   }).format(value)
 }
 
+function formatBytes(value) {
+  const bytes = Number(value) || 0
+  if (bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${formatNumber(size, unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatDateTime(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 function createSummaryCard(label, value, note) {
   return `
     <article class="summary-card">
@@ -878,6 +935,7 @@ function getActiveTabTitle() {
   }
 
   if (state.activeTab === 'settings') return 'Настройки runtime'
+  if (state.activeTab === 'updates') return 'Центр обновления'
   if (state.activeTab === 'logs') return 'Логи runtime'
   if (state.activeTab === 'chat') return 'Чат сервера'
   return 'Пульт добычи'
@@ -899,6 +957,18 @@ function buildTopbarSubtitle({ configuredBots, activeBots, runtimeTotalBots, isR
 
   if (state.activeTab === 'logs') {
     return `Последние сообщения runtime. Сейчас в буфере ${formatNumber((state.runtime.logs || []).length)} записей.`
+  }
+
+  if (state.activeTab === 'updates') {
+    if (state.updates.status === 'available') {
+      return `Доступна версия ${state.updates.latestVersion}. Скачивание и установка запускаются только вручную.`
+    }
+
+    if (state.updates.status === 'current') {
+      return `Установлена актуальная версия ${state.updates.currentVersion || state.appVersion}.`
+    }
+
+    return 'Приложение проверяет обновления на GitHub и показывает установку только по вашему нажатию.'
   }
 
   if (state.activeTab === 'chat') {
@@ -1068,7 +1138,7 @@ function parsePrimitiveValue(kind, rawValue) {
 function renderTabs() {
   const isDashboard = state.activeTab === 'dashboard'
   elements.workspace.classList.toggle('workspace--dashboard', isDashboard)
-  ;['bots', 'settings', 'logs', 'chat'].forEach(tabName => {
+  ;['bots', 'settings', 'updates', 'logs', 'chat'].forEach(tabName => {
     elements.workspace.classList.toggle(`workspace--${tabName}`, state.activeTab === tabName)
   })
 
@@ -1160,6 +1230,7 @@ function renderAll() {
   renderBotEditor()
   renderSettingsV2()
   renderValidation()
+  renderUpdates()
   renderLogs()
   renderChatLogs()
 }
@@ -1194,6 +1265,11 @@ function cacheElements() {
   elements.logCounter = document.getElementById('log-counter')
   elements.chatLogStream = document.getElementById('chat-log-stream')
   elements.chatLogCounter = document.getElementById('chat-log-counter')
+  elements.updatesContent = document.getElementById('updates-content')
+  elements.checkUpdatesButton = document.getElementById('check-updates-btn')
+  elements.downloadUpdateButton = document.getElementById('download-update-btn')
+  elements.installUpdateButton = document.getElementById('install-update-btn')
+  elements.openReleaseButton = document.getElementById('open-release-btn')
   elements.configPathLabel = document.getElementById('config-path-label')
   elements.logPathLabel = document.getElementById('log-path-label')
   elements.chatLogPathLabel = document.getElementById('chat-log-path-label')
@@ -1225,10 +1301,17 @@ async function bootstrap() {
     ...(bootstrapPayload.desktopSettings || {})
   }
   state.platform = bootstrapPayload.platform || 'desktop'
+  state.appVersion = bootstrapPayload.appVersion || bootstrapPayload.updates?.currentVersion || '0.0.0'
+  state.updateSource = bootstrapPayload.updateSource || null
   state.capabilities = normalizeCapabilities(bootstrapPayload.capabilities)
   state.runtime = {
     ...createEmptyRuntime(),
     ...(bootstrapPayload.runtime || {})
+  }
+  state.updates = {
+    ...createEmptyUpdateState(),
+    currentVersion: state.appVersion,
+    ...(bootstrapPayload.updates || {})
   }
   state.selectedBotIndex = 0
 
@@ -1259,7 +1342,21 @@ async function bootstrap() {
     queueRender(runtimeParts)
   })
 
+  if (state.unsubscribeUpdates) {
+    state.unsubscribeUpdates()
+  }
+
+  state.unsubscribeUpdates = bridge.onUpdateState(nextUpdates => {
+    state.updates = {
+      ...createEmptyUpdateState(),
+      currentVersion: state.appVersion,
+      ...(nextUpdates || {})
+    }
+    queueRender('updates', 'chrome')
+  })
+
   renderAll()
+  startAutoUpdateCheck()
 }
 
 function openCoordinateModal() {
@@ -2124,6 +2221,144 @@ function renderValidation() {
   `
 }
 
+function formatUpdateStatus(status) {
+  const map = {
+    idle: { label: 'Не проверялось', className: 'status-pill--idle' },
+    checking: { label: 'Проверка', className: 'status-pill--starting' },
+    current: { label: 'Актуальная', className: 'status-pill--running' },
+    available: { label: 'Доступно', className: 'status-pill--starting' },
+    downloading: { label: 'Скачивание', className: 'status-pill--starting' },
+    ready: { label: 'Готово к установке', className: 'status-pill--running' },
+    installing: { label: 'Установка', className: 'status-pill--starting' },
+    unavailable: { label: 'Нет файла', className: 'status-pill--error' },
+    error: { label: 'Ошибка', className: 'status-pill--error' }
+  }
+  return map[status] || map.idle
+}
+
+function getUpdateProgress(updates = state.updates) {
+  const progress = updates.progress || {}
+  const receivedBytes = Number(progress.receivedBytes) || 0
+  const totalBytes = Number(progress.totalBytes) || Number(updates.asset?.size) || 0
+  const percent = Number.isFinite(Number(progress.percent))
+    ? Math.max(0, Math.min(100, Number(progress.percent)))
+    : totalBytes > 0
+      ? Math.max(0, Math.min(100, (receivedBytes / totalBytes) * 100))
+      : 0
+
+  return { receivedBytes, totalBytes, percent }
+}
+
+function renderUpdates() {
+  if (!elements.updatesContent) return
+
+  const updates = {
+    ...createEmptyUpdateState(),
+    currentVersion: state.appVersion,
+    ...state.updates
+  }
+  const status = formatUpdateStatus(updates.status)
+  const progress = getUpdateProgress(updates)
+  const supportsUpdates = state.capabilities.updates === true
+  const canCheck = supportsUpdates && !['checking', 'downloading', 'installing'].includes(updates.status)
+  const canDownload = supportsUpdates && updates.status === 'available' && updates.updateAvailable && updates.asset
+  const canInstall = supportsUpdates && updates.status === 'ready' && updates.downloadedFilePath
+  const releaseUrl = updates.releaseUrl || state.updateSource?.releaseUrl || ''
+  const releaseBody = String(updates.body || '').trim()
+  const assetName = updates.asset?.name || '-'
+  const assetSize = updates.asset?.size || updates.downloadedSize || 0
+
+  if (elements.checkUpdatesButton) elements.checkUpdatesButton.disabled = !canCheck
+  if (elements.downloadUpdateButton) elements.downloadUpdateButton.disabled = !canDownload
+  if (elements.installUpdateButton) elements.installUpdateButton.disabled = !canInstall
+  if (elements.openReleaseButton) elements.openReleaseButton.disabled = !releaseUrl
+
+  if (!supportsUpdates) {
+    elements.updatesContent.innerHTML = `
+      <div class="empty-state">Центр обновления недоступен в этой оболочке приложения.</div>
+    `
+    return
+  }
+
+  elements.updatesContent.innerHTML = `
+    <div class="updates-grid">
+      <article class="updates-card updates-card--main">
+        <div class="updates-card__top">
+          <div>
+            <p class="eyebrow">Состояние</p>
+            <h4>${escapeHtml(status.label)}</h4>
+          </div>
+          <span class="status-pill ${status.className}">${escapeHtml(status.label)}</span>
+        </div>
+        <p class="muted-copy">${escapeHtml(getUpdateStatusCopy(updates))}</p>
+        ${updates.status === 'downloading' || updates.status === 'ready'
+          ? `
+            <div class="update-progress" aria-label="Прогресс скачивания">
+              <div class="update-progress__bar">
+                <span style="width: ${escapeAttribute(String(progress.percent))}%"></span>
+              </div>
+              <div class="update-progress__meta">
+                <span>${formatNumber(progress.percent, 0)}%</span>
+                <span>${formatBytes(progress.receivedBytes)} / ${formatBytes(progress.totalBytes || assetSize)}</span>
+              </div>
+            </div>
+          `
+          : ''
+        }
+        ${updates.error ? `<div class="validation-banner">${escapeHtml(updates.error)}</div>` : ''}
+      </article>
+
+      <article class="updates-card">
+        <span class="summary-label">Текущая версия</span>
+        <strong class="summary-value">${escapeHtml(updates.currentVersion || state.appVersion)}</strong>
+        <span class="summary-note">Установлена сейчас</span>
+      </article>
+
+      <article class="updates-card">
+        <span class="summary-label">Последняя версия</span>
+        <strong class="summary-value">${escapeHtml(updates.latestVersion || '-')}</strong>
+        <span class="summary-note">${escapeHtml(formatDateTime(updates.publishedAt))}</span>
+      </article>
+
+      <article class="updates-card">
+        <span class="summary-label">Файл обновления</span>
+        <strong class="updates-file-name">${escapeHtml(assetName)}</strong>
+        <span class="summary-note">${formatBytes(assetSize)}</span>
+      </article>
+
+      <article class="updates-card">
+        <span class="summary-label">Проверка файла</span>
+        <strong>${updates.checksum?.hash ? 'SHA256 готов' : 'SHA256 не найден'}</strong>
+        <span class="summary-note">${updates.checksum?.hash ? escapeHtml(updates.checksum.hash.slice(0, 12)) : 'Скачивание будет заблокировано'}</span>
+      </article>
+    </div>
+
+    <article class="updates-card updates-card--notes">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Release notes</p>
+          <h4>${escapeHtml(updates.releaseName || updates.tagName || 'Описание версии')}</h4>
+        </div>
+      </div>
+      <pre class="update-notes">${escapeHtml(releaseBody || 'Описание появится после проверки обновлений.')}</pre>
+    </article>
+  `
+}
+
+function getUpdateStatusCopy(updates) {
+  if (updates.status === 'checking') return 'Проверяю последнюю версию на странице скачивания.'
+  if (updates.status === 'current') return 'У вас уже установлена последняя доступная версия.'
+  if (updates.status === 'available') return 'Найдена новая версия. Скачивание начнётся только после нажатия кнопки.'
+  if (updates.status === 'downloading') return 'Скачиваю файл обновления и затем проверю SHA256.'
+  if (updates.status === 'ready') return state.platform === 'android'
+    ? 'APK скачан и проверен. Нажмите установку, затем подтвердите её в Android.'
+    : 'Установщик скачан и проверен. При установке runtime будет остановлен.'
+  if (updates.status === 'installing') return 'Открываю системную установку. Подтвердите действие в системе.'
+  if (updates.status === 'unavailable') return 'Релиз найден, но файл для этой платформы не прикреплён.'
+  if (updates.status === 'error') return 'Проверка или скачивание завершились ошибкой.'
+  return 'Автопроверка запускается при старте приложения. Установка всегда только по вашему нажатию.'
+}
+
 function renderLogs() {
   const totalLogs = state.runtime.logs || []
   const logs = totalLogs.slice(-140).reverse()
@@ -2288,6 +2523,104 @@ async function handleExportConfig() {
   }
 }
 
+async function refreshUpdates(showResultToast = false) {
+  if (state.capabilities.updates !== true) {
+    showToast('Центр обновления недоступен на текущей платформе.', 'warning')
+    return
+  }
+
+  state.updates = {
+    ...state.updates,
+    status: 'checking',
+    error: ''
+  }
+  queueRender('updates', 'chrome')
+
+  const result = await bridge.checkUpdates()
+  state.updates = {
+    ...createEmptyUpdateState(),
+    currentVersion: state.appVersion,
+    ...(result || {})
+  }
+  queueRender('updates', 'chrome')
+
+  if (!showResultToast) return
+  if (state.updates.status === 'available') {
+    showToast(`Доступна версия ${state.updates.latestVersion}.`, 'success')
+  } else if (state.updates.status === 'current') {
+    showToast('Установлена актуальная версия.', 'success')
+  } else if (state.updates.status === 'error') {
+    showToast(state.updates.error || 'Не удалось проверить обновления.', 'error')
+  }
+}
+
+function startAutoUpdateCheck() {
+  if (state.updateAutoCheckStarted || state.capabilities.updates !== true) return
+  state.updateAutoCheckStarted = true
+
+  window.setTimeout(() => {
+    refreshUpdates(false).catch(error => {
+      state.updates = {
+        ...state.updates,
+        status: 'error',
+        error: error.message || String(error)
+      }
+      queueRender('updates', 'chrome')
+    })
+  }, 1200)
+}
+
+async function handleDownloadUpdate() {
+  if (state.capabilities.updates !== true) {
+    showToast('Центр обновления недоступен на текущей платформе.', 'warning')
+    return
+  }
+
+  const result = await bridge.downloadUpdate()
+  state.updates = {
+    ...createEmptyUpdateState(),
+    currentVersion: state.appVersion,
+    ...(result || {})
+  }
+  queueRender('updates', 'chrome')
+  showToast('Обновление скачано и проверено.', 'success')
+}
+
+async function handleInstallUpdate() {
+  if (state.capabilities.updates !== true) {
+    showToast('Центр обновления недоступен на текущей платформе.', 'warning')
+    return
+  }
+
+  if (state.platform === 'desktop' && !window.confirm('Остановить runtime и запустить установщик обновления?')) {
+    return
+  }
+
+  const result = await bridge.installUpdate()
+  state.updates = {
+    ...createEmptyUpdateState(),
+    currentVersion: state.appVersion,
+    ...(result || {})
+  }
+  queueRender('updates', 'chrome')
+  showToast(
+    state.platform === 'android'
+      ? 'Открыл установку APK. Если Android попросит разрешение источника, включите его для приложения.'
+      : 'Запускаю установщик обновления.',
+    'success'
+  )
+}
+
+function openUpdateReleasePage() {
+  const releaseUrl = state.updates.releaseUrl || state.updateSource?.releaseUrl
+  if (!releaseUrl) {
+    showToast('Страница версии пока неизвестна. Сначала проверьте обновления.', 'warning')
+    return
+  }
+
+  window.open(releaseUrl, '_blank', 'noopener')
+}
+
 function switchTab(nextTab) {
   if (!nextTab || state.activeTab === nextTab) {
     return
@@ -2300,6 +2633,7 @@ function switchTab(nextTab) {
     nextTab === 'dashboard' ? 'dashboard' : null,
     nextTab === 'bots' ? ['botList', 'botEditor'] : null,
     nextTab === 'settings' ? 'settings' : null,
+    nextTab === 'updates' ? 'updates' : null,
     nextTab === 'logs' ? 'logs' : null,
     nextTab === 'chat' ? 'chat' : null
   )
@@ -2510,6 +2844,34 @@ function attachStaticListeners() {
     showToast('Конфиг сброшен к базовому шаблону.', 'success')
   })
 
+  elements.checkUpdatesButton.addEventListener('click', async () => {
+    try {
+      await refreshUpdates(true)
+    } catch (error) {
+      showToast(error.message, 'error')
+    }
+  })
+
+  elements.downloadUpdateButton.addEventListener('click', async () => {
+    try {
+      await handleDownloadUpdate()
+    } catch (error) {
+      showToast(error.message, 'error')
+    }
+  })
+
+  elements.installUpdateButton.addEventListener('click', async () => {
+    try {
+      await handleInstallUpdate()
+    } catch (error) {
+      showToast(error.message, 'error')
+    }
+  })
+
+  elements.openReleaseButton.addEventListener('click', () => {
+    openUpdateReleasePage()
+  })
+
   elements.addBotButton.addEventListener('click', () => {
     addBot()
   })
@@ -2638,6 +3000,8 @@ function attachStaticListeners() {
         resizeParts.push('botList', 'botEditor')
       } else if (state.activeTab === 'settings') {
         resizeParts.push('settings')
+      } else if (state.activeTab === 'updates') {
+        resizeParts.push('updates')
       } else if (state.activeTab === 'logs') {
         resizeParts.push('logs')
       } else if (state.activeTab === 'chat') {
