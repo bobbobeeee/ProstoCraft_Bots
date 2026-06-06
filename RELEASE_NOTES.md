@@ -1,23 +1,24 @@
-# ProstoCraft Bot Studio 1.0.3
+# ProstoCraft Bot Studio 2.0.0
 
-Текущий релиз содержит локальную рабочую версию бота, которую нужно хранить на GitHub как основную.
+Крупный релиз со стабильным входом через LimboFilter 1.1.18, desktop installer и Android APK.
 
 ## Что нового
 
-- Стабильная desktop-сборка для Windows.
-- Отдельный установщик и отдельная portable-версия.
-- Упрощённые настройки без лишних экспериментальных пунктов.
-- Режим отладки включается вручную и добавляет подробные `[DIAG]` в логи.
-- Свежие строки логов отображаются сверху.
-- Логи runtime рассчитаны на последний сеанс, чтобы старые запуски не мешали разбору проблем.
+- Бот адаптирован под реальную fall-проверку LimboFilter 1.1.18.
+- Координаты проверки берутся строго из server `position` packet, включая реальный `Y=1024`.
+- Добавлен строгий локальный emulator LimboFilter для тестов.
+- Чат/карта-капча не решается автоматически: событие логируется, бот уходит в 30-минутную паузу.
+- Windows релиз теперь публикуется как installer без portable.
+- Android релиз публикуется отдельным APK.
 
 ## Что скачать
 
-- `ProstoCraft.Bot.Studio-Setup-1.0.3.exe` - обычный установщик Windows.
-- `ProstoCraft.Bot.Studio-Portable-1.0.3.exe` - запуск без установки.
+- `ProstoCraft.Bot.Studio-Setup-2.0.0.exe` - обычный установщик Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk` - Android APK.
 - `SHA256SUMS.txt` - контрольные суммы файлов.
 
 ## Проверка перед публикацией
 
 - `npm test`
-- `npm run dist:win:release`
+- `npm run dist:win:installer`
+- `npm run android:build:release`

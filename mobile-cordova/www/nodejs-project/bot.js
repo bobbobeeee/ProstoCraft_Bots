@@ -6,6 +6,29 @@ const blessed = require('blessed')
 const contrib = require('blessed-contrib')
 const os = require('os')
 const { computeBotRateStats, formatBlocksPerMinute, formatBlocksPerSecond } = require('./monitoring')
+const {
+  calculateBotFilterReconnectDelay,
+  classifyBotFilterMessage
+} = require('./bot-filter')
+const {
+  getReconnectDecision,
+  isTooManyPacketsText
+} = require('./reconnect-policy')
+const {
+  createSpeedGuardProfile,
+  getAdaptiveRateWindowMs,
+  getAdaptiveWaitMs,
+  getSpeedGuardTargetRate,
+  recordSpeedGuardProgress,
+  rememberSpeedGuardPeak: rememberAdaptiveSpeedGuardPeak
+} = require('./speed-guard')
+const {
+  LIMBO_FILTER_DEFAULTS,
+  createFallPacket,
+  getFinishPacketTicks,
+  getLoadedChunkSpeed,
+  getMinimumCheckMs
+} = require('./limbo-filter')
 
 const HOST_CONTROLLED = Boolean(global.__BOT_HOST__)
 const MOBILE_RUNTIME_PROFILE = HOST_CONTROLLED && process.env.BOT_MOBILE_RUNTIME === '1'
@@ -90,7 +113,6 @@ function restoreProcessOutputs() {
   process.stderr.write = BASE_STDERR_WRITE
 }
 
-// Р СџР В»Р В°Р С–Р С‘Р Р… РЎвЂћР С‘Р В·Р С‘Р С”Р С‘ Р Т‘Р В»РЎРЏ Р С—РЎР‚Р В°Р Р†Р С‘Р В»РЎРЉР Р…Р С•Р С–Р С• Р С—Р В°Р Т‘Р ВµР Р…Р С‘РЎРЏ (Р С”Р В°Р С” РЎС“ РЎР‚Р ВµР В°Р В»РЎРЉР Р…Р С•Р С–Р С• Р С”Р В»Р С‘Р ВµР Р…РЎвЂљР В°)
 let physicsPlugin
 try {
   physicsPlugin = require('mineflayer-physics')
@@ -101,7 +123,6 @@ try {
 
 
 // ============================================================================
-// Р СџР С›Р вЂќР С’Р вЂ™Р вЂєР вЂўР СњР ВР вЂў Р СњР вЂўР СњР Р€Р вЂ“Р СњР В«Р Тђ Р вЂєР С›Р вЂњР С›Р вЂ™
 // ============================================================================
 const _warn = BASE_CONSOLE.warn
 const _error = BASE_CONSOLE.error
@@ -140,7 +161,6 @@ function emitRuntimeEvent(type, payload = {}) {
   } catch (error) {}
 }
 
-// Р СџР С•Р В»Р Р…Р С•РЎРѓРЎвЂљРЎРЉРЎР‹ Р С•РЎвЂљР С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С console.warn Р Т‘Р В»РЎРЏ РЎРѓР ВµРЎвЂљР ВµР Р†РЎвЂ№РЎвЂ¦ Р С•РЎв‚¬Р С‘Р В±Р С•Р С”
 console.warn = (...args) => {
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')
   if (msg.includes('Ignoring block entities')) return
@@ -248,7 +268,6 @@ registerProcessHandler('unhandledRejection', (reason, promise) => {
 })
 
 // ============================================================================
-// Р вЂ”Р С’Р вЂњР В Р Р€Р вЂ”Р С™Р С’ Р С™Р С›Р СњР В¤Р ВР вЂњР Р€Р В Р С’Р В¦Р ВР В
 // ============================================================================
 
 const originalStderrWrite = BASE_STDERR_WRITE
@@ -271,62 +290,114 @@ process.stderr.write = (chunk, encoding, callback) => {
 }
 
 // ============================================================================
-// Р вЂєР С›Р вЂњР ВР В Р С›Р вЂ™Р С’Р СњР ВР вЂў Р вЂ™ Р В¤Р С’Р в„ўР вЂє
 // ============================================================================
 const LOG_FILE_PATH = path.resolve(
   process.env.BOT_LOG_PATH ||
   path.join(CONFIG_DIR, 'bot.log')
 )
+const CHAT_LOG_FILE_PATH = path.resolve(
+  process.env.BOT_CHAT_LOG_PATH ||
+  path.join(CONFIG_DIR, 'chat.log')
+)
 const MAX_LOG_SIZE = 50 * 1024 * 1024
 let logFileStream = null
 let currentLogSize = 0
+let chatLogFileStream = null
+let currentChatLogSize = 0
 
-function initLogFile() {
+function initAppendOnlyLogFile(filePath, title) {
   try {
-    fs.mkdirSync(path.dirname(LOG_FILE_PATH), { recursive: true })
-    currentLogSize = 0
-    logFileStream = fs.createWriteStream(LOG_FILE_PATH, { flags: 'w' })
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    const stream = fs.createWriteStream(filePath, { flags: 'w' })
 
-    const startMsg = `${'='.repeat(80)}\n[${new Date().toISOString()}] === НОВАЯ СЕССИЯ ===\n${'='.repeat(80)}\n`
-    logFileStream.write(startMsg)
-    currentLogSize += Buffer.byteLength(startMsg)
-    
+    const startMsg = `${'='.repeat(80)}\n[${new Date().toISOString()}] === ${title} ===\n${'='.repeat(80)}\n`
+    stream.write(startMsg)
+    return {
+      stream,
+      size: Buffer.byteLength(startMsg)
+    }
   } catch (e) {
-    console.error('Ошибка инициализации лог-файла:', e.message)
+    console.error(`Ошибка инициализации лог-файла ${filePath}:`, e.message)
+    return {
+      stream: null,
+      size: 0
+    }
   }
 }
 
-function writeToLogFile(message) {
-  if (!logFileStream) return
-  
+function initLogFile() {
+  const mainLog = initAppendOnlyLogFile(LOG_FILE_PATH, 'НОВАЯ СЕССИЯ')
+  logFileStream = mainLog.stream
+  currentLogSize = mainLog.size
+
+  const chatLog = initAppendOnlyLogFile(CHAT_LOG_FILE_PATH, 'НОВАЯ СЕССИЯ ЧАТА')
+  chatLogFileStream = chatLog.stream
+  currentChatLogSize = chatLog.size
+}
+
+function writeAppendOnlyLogLine(filePath, streamRef, currentSize, setCurrentSize, line) {
+  if (!streamRef.current) return
+
   try {
     const timestamp = new Date().toISOString()
-    const logLine = `[${timestamp}] ${message}\n`
+    const logLine = `[${timestamp}] ${line}\n`
     const byteLength = Buffer.byteLength(logLine)
-    
-    if (currentLogSize + byteLength > MAX_LOG_SIZE) {
-      logFileStream.end()
-      
-      const backupPath = LOG_FILE_PATH + '.old'
+
+    if (currentSize + byteLength > MAX_LOG_SIZE) {
+      streamRef.current.end()
+
+      const backupPath = filePath + '.old'
       if (fs.existsSync(backupPath)) {
         fs.unlinkSync(backupPath)
       }
-      if (fs.existsSync(LOG_FILE_PATH)) {
-        fs.renameSync(LOG_FILE_PATH, backupPath)
+      if (fs.existsSync(filePath)) {
+        fs.renameSync(filePath, backupPath)
       }
-      
-      logFileStream = fs.createWriteStream(LOG_FILE_PATH, { flags: 'a' })
-      currentLogSize = 0
-      
+
+      streamRef.current = fs.createWriteStream(filePath, { flags: 'a' })
+      currentSize = 0
+
       const rotationMsg = `[${timestamp}] === РОТАЦИЯ ЛОГА (превышен размер ${MAX_LOG_SIZE} байт) ===\n`
-      logFileStream.write(rotationMsg)
-      currentLogSize += Buffer.byteLength(rotationMsg)
+      streamRef.current.write(rotationMsg)
+      currentSize += Buffer.byteLength(rotationMsg)
     }
-    
-    logFileStream.write(logLine)
-    currentLogSize += byteLength
-    
+
+    streamRef.current.write(logLine)
+    setCurrentSize(currentSize + byteLength)
   } catch (e) {}
+}
+
+function writeToLogFile(message) {
+  writeAppendOnlyLogLine(
+    LOG_FILE_PATH,
+    {
+      get current() { return logFileStream },
+      set current(value) { logFileStream = value }
+    },
+    currentLogSize,
+    value => { currentLogSize = value },
+    message
+  )
+}
+
+function writeToChatLogFile(entry) {
+  const botName = String(entry.botName || 'SERVER')
+  const source = String(entry.source || 'chat')
+  const position = entry.position ? `/${entry.position}` : ''
+  const sender = entry.sender ? `/${entry.sender}` : ''
+  const message = normalizeChatText(entry.message || entry.rawMessage)
+  if (!message) return
+
+  writeAppendOnlyLogLine(
+    CHAT_LOG_FILE_PATH,
+    {
+      get current() { return chatLogFileStream },
+      set current(value) { chatLogFileStream = value }
+    },
+    currentChatLogSize,
+    value => { currentChatLogSize = value },
+    `[CHAT] [${botName.padEnd(20)}] [${source}${position}${sender}] ${message}`
+  )
 }
 
 initLogFile()
@@ -336,6 +407,11 @@ process.on('exit', () => {
     const exitMsg = `[${new Date().toISOString()}] === ЗАВЕРШЕНИЕ СЕССИИ ===\n`
     logFileStream.write(exitMsg)
     logFileStream.end()
+  }
+  if (chatLogFileStream) {
+    const exitMsg = `[${new Date().toISOString()}] === ЗАВЕРШЕНИЕ СЕССИИ ЧАТА ===\n`
+    chatLogFileStream.write(exitMsg)
+    chatLogFileStream.end()
   }
 })
 
@@ -348,6 +424,7 @@ try {
 }
 
 const SERVER_HOST = config.server.host
+const SERVER_PORT = Number.isFinite(Number(config.server.port)) ? Number(config.server.port) : 25565
 const MC_VERSION = config.server.version
 const PASSWORD = config.server.password
 const MENU_SLOT_1 = config.menu.slot1
@@ -392,9 +469,9 @@ const BREAK_PACKET_MIN_TARGET_COOLDOWN_MS = Math.max(0, Number([75, 45, 20].incl
 const BREAK_PACKET_MAX_PER_SECOND = Math.max(2, Number([72, 108, 160, 240].includes(config.timing.breakPacketMaxPerSecond) ? 300 : (config.timing.breakPacketMaxPerSecond ?? 300)) || 300)
 const BREAK_PACKET_BURST_WINDOW_MS = Math.max(50, Number(config.timing.breakPacketBurstWindowMs ?? 250) || 250)
 const BREAK_PACKET_BURST_LIMIT = Math.max(2, Number([18, 28, 42, 64].includes(config.timing.breakPacketBurstLimit) ? 84 : (config.timing.breakPacketBurstLimit ?? 84)) || 84)
-const BREAK_PACKET_SAFE_MAX_PER_SECOND = Math.max(2, Number([42, 60, 96, 120].includes(config.timing.breakPacketSafeMaxPerSecond) ? 150 : (config.timing.breakPacketSafeMaxPerSecond ?? 150)) || 150)
-const BREAK_PACKET_SAFE_BURST_LIMIT = Math.max(2, Number([10, 15, 24, 32].includes(config.timing.breakPacketSafeBurstLimit) ? 40 : (config.timing.breakPacketSafeBurstLimit ?? 40)) || 40)
-const BREAK_PACKET_SAFE_MODE_MS = Math.max(60000, Number(config.timing.breakPacketSafeModeMs ?? 900000) || 900000)
+const BREAK_PACKET_SAFE_MAX_PER_SECOND = Math.max(2, Number([42, 60, 96, 120, 150].includes(config.timing.breakPacketSafeMaxPerSecond) ? 240 : (config.timing.breakPacketSafeMaxPerSecond ?? 240)) || 240)
+const BREAK_PACKET_SAFE_BURST_LIMIT = Math.max(2, Number([10, 15, 24, 32, 40].includes(config.timing.breakPacketSafeBurstLimit) ? 68 : (config.timing.breakPacketSafeBurstLimit ?? 68)) || 68)
+const BREAK_PACKET_SAFE_MODE_MS = Math.max(60000, Number(config.timing.breakPacketSafeModeMs ?? 120000) || 120000)
 const BREAK_PACKET_SAFE_REPEATS = Math.max(1, Number(config.timing.breakPacketSafeRepeats ?? 1) || 1)
 const LOGIN_COMMAND_COOLDOWN_MS = Math.max(1000, Number(config.timing.loginCommandCooldownMs ?? 7000) || 7000)
 const REACTIVE_BREAK_REPEATS = Math.max(1, Number(config.timing.reactiveBreakRepeats === 2 ? 1 : (config.timing.reactiveBreakRepeats ?? 1)) || 1)
@@ -468,18 +545,22 @@ const LIMBO_FALL_TICKS = Math.max(
   20,
   Number.isFinite(configuredLimboFallTicks)
     ? (configuredLimboFallTicks === 96 ? 128 : configuredLimboFallTicks)
-    : 128
+    : LIMBO_FILTER_DEFAULTS.fallingCheckTicks
 )
 const LIMBO_FALL_PACKET_MS = Math.max(
   15,
   Number.isFinite(configuredLimboFallPacketMs)
     ? (configuredLimboFallPacketMs === 25 ? 50 : configuredLimboFallPacketMs)
-    : 50
+    : LIMBO_FILTER_DEFAULTS.packetMs
 )
 const LIMBO_DETECTION_TIMEOUT_MS = Math.max(1500, Number(config.antibot.limboDetectionTimeoutMs ?? 4500) || 4500)
 const LIMBO_COMPLETION_GRACE_MS = Math.max(0, Number(config.antibot.limboCompletionGraceMs ?? 900) || 900)
 const LIMBO_POST_FALL_JOIN_MS = Math.max(0, Number(config.antibot.limboPostFallJoinMs ?? 900) || 900)
 const LIMBO_MENU_WAIT_MS = Math.max(0, Number(config.antibot.limboMenuWaitMs ?? 12000) || 12000)
+const SCANNER_PASSIVE_WAIT_MS = Math.max(15000, Number(config.antibot.scannerPassiveWaitMs ?? 60000) || 60000)
+const SCANNER_RECENT_POSITION_MS = Math.max(500, Number(config.antibot.scannerRecentPositionMs ?? 5000) || 5000)
+const SCANNER_POSITION_WAIT_MS = Math.max(500, Number(config.antibot.scannerPositionWaitMs ?? 2500) || 2500)
+const LIMBO_SERVER_TIMEOUT_MS = Math.max(5000, Number(config.antibot.limboServerTimeoutMs ?? LIMBO_FILTER_DEFAULTS.timeoutMs) || LIMBO_FILTER_DEFAULTS.timeoutMs)
 const MENU_ATTEMPT_LIMIT = Math.max(3, Number(config.timing.menuAttemptLimit ?? 6) || 6)
 const MENU_RECOVERY_BASE_MS = Math.max(1000, Number(config.timing.menuRecoveryBaseMs ?? 3500) || 3500)
 const MENU_RECOVERY_STEP_MS = Math.max(0, Number(config.timing.menuRecoveryStepMs ?? 2500) || 2500)
@@ -518,10 +599,14 @@ const PAUSE_FILE_PATH = path.resolve(CONFIG_DIR, config.pause?.file || 'pause.tx
 const PAUSE_CHECK_INTERVAL = MOBILE_RUNTIME_PROFILE
   ? Math.max(Number(config.pause?.checkInterval) || 1000, MOBILE_PAUSE_CHECK_INTERVAL_MS)
   : (Number(config.pause?.checkInterval) || 1000)
-const CHAT_CAPTCHA_RECONNECT_MS = 10 * 60 * 1000
+const CHAT_CAPTCHA_RECONNECT_MS = Math.max(600000, Number(config.maintenance?.chatCaptchaReconnectMs ?? 30 * 60 * 1000) || 30 * 60 * 1000)
 const MEMORY_LIMIT_MB = config.globalRestart?.memoryLimitMB || 0
 const OFFLINE_WATCHDOG_MS = Math.max(30000, Number(config.maintenance?.offlineWatchdogMs ?? 90000) || 90000)
 const OFFLINE_WATCHDOG_INTERVAL_MS = Math.max(10000, Number(config.maintenance?.offlineWatchdogIntervalMs ?? 30000) || 30000)
+const BOT_FILTER_RETRY_BASE_MS = Math.max(5000, Number(config.maintenance?.botFilterRetryBaseMs ?? 8000) || 8000)
+const BOT_FILTER_RETRY_MAX_MS = Math.max(BOT_FILTER_RETRY_BASE_MS, Number(config.maintenance?.botFilterRetryMaxMs ?? 120000) || 120000)
+const BOT_FILTER_FALL_ATTEMPTS_BEFORE_HOLD = Math.max(1, Number(config.maintenance?.botFilterFallAttemptsBeforeHold ?? 2) || 2)
+const BOT_FILTER_FALL_HOLD_MS = Math.max(CHAT_CAPTCHA_RECONNECT_MS, Number(config.maintenance?.botFilterFallHoldMs ?? CHAT_CAPTCHA_RECONNECT_MS) || CHAT_CAPTCHA_RECONNECT_MS)
 const ENABLE_SOFT_RESTART = config.features?.enableSoftRestart !== false
 // When enabled, the miner first tries an instant client-side break packet pair.
 // If the server does not confirm the block update quickly, it falls back to
@@ -529,17 +614,13 @@ const ENABLE_SOFT_RESTART = config.features?.enableSoftRestart !== false
 const ENABLE_AGGRESSIVE_MINING = config.features?.enableAggressiveMining !== false
 const ENABLE_PERIODIC_ROTATION = config.features?.enablePeriodicRotation === true
 const SPEED_WINDOW_MS = Math.max(1000, config.monitor?.speedWindowMs || 10000)
-const rawSpeedGuardFloor = Number(config.timing?.speedGuardMinBlocksPerMin ?? config.timing?.minBlocksPerMin)
 const SPEED_GUARD_ENABLED = config.features?.enableSpeedGuard !== false
 const SPEED_GUARD_INTERVAL_MS = Math.max(1000, Number(config.timing?.speedGuardIntervalMs ?? 5000) || 5000)
 const SPEED_GUARD_START_GRACE_MS = Math.max(15000, Number(config.timing?.speedGuardStartGraceMs ?? 45000) || 45000)
 const SPEED_GUARD_LOW_RATE_MS = Math.max(SPEED_GUARD_INTERVAL_MS, Number(config.timing?.speedGuardLowRateMs ?? 25000) || 25000)
 const SPEED_GUARD_RECOVERY_COOLDOWN_MS = Math.max(5000, Number(config.timing?.speedGuardRecoveryCooldownMs ?? 15000) || 15000)
 const SPEED_GUARD_TARGET_RATIO = Math.min(0.95, Math.max(0.5, Number(config.timing?.speedGuardTargetRatio ?? 0.82) || 0.82))
-const SPEED_GUARD_MIN_BLOCKS_PER_MIN = Number.isFinite(rawSpeedGuardFloor) && rawSpeedGuardFloor > 20
-  ? rawSpeedGuardFloor
-  : 350
-const SPEED_GUARD_MIN_LEARN_RATE = Math.max(120, Number(config.timing?.speedGuardMinLearnRate ?? 450) || 450)
+const SPEED_GUARD_RATE_WINDOW_MS = Math.max(SPEED_WINDOW_MS, Number(config.timing?.speedGuardRateWindowMs ?? 30000) || 30000)
 const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
 const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
 const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(1, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
@@ -549,7 +630,6 @@ const HEADLESS_MODE = process.argv.includes('--headless') ||
   !process.stdin.isTTY
 
 // ============================================================================
-// Р вЂњР В Р С’Р В¤Р ВР В§Р вЂўР РЋР С™Р ВР в„ў Р ВР СњР СћР вЂўР В Р В¤Р вЂўР в„ўР РЋ (BLESSED)
 // ============================================================================
 let screen = null
 let grid = null
@@ -599,7 +679,6 @@ if (!HEADLESS_MODE) {
 
 
 // ============================================================================
-// Р вЂќР С’Р СњР СњР В«Р вЂў Р СљР С›Р СњР ВР СћР С›Р В Р ВР СњР вЂњР С’
 // ============================================================================
 const monitorData = {
   startTime: Date.now(),
@@ -608,16 +687,24 @@ const monitorData = {
 }
 const stabilityCooldowns = new Map()
 const packetSafetyCooldowns = new Map()
-const speedGuardPeakRates = new Map()
+const speedGuardProfiles = new Map()
+const botFilterRetryStates = new Map()
 monitorData.scriptResources = {
   cpu: [],
   ram: [],
   x: []
 }
 
+function getSpeedGuardProfile(username) {
+  const key = username || 'default'
+  if (!speedGuardProfiles.has(key)) {
+    speedGuardProfiles.set(key, createSpeedGuardProfile())
+  }
+  return speedGuardProfiles.get(key)
+}
+
 
 // ============================================================================
-// Р В¤Р Р€Р СњР С™Р В¦Р ВР В UI
 // ============================================================================
 function safeRender() {
   if (!screen || HEADLESS_MODE) return
@@ -650,24 +737,24 @@ function updateInfoBox() {
     .reduce((sum, bot) => sum + (bot.blocksLastMinute || 0), 0)
 
   infoBox.setContent([
-    `  {cyan-fg}  Время работы:{/cyan-fg}  {bold}${hours}ч ${minutes}Рј ${seconds}с{/bold}`,
+    `  {cyan-fg}  Время работы:{/cyan-fg}  {bold}${hours}ч ${minutes}м ${seconds}с{/bold}`,
     `  {green-fg} Боты активны:{/green-fg}  {bold}${activeBots}/${totalBots}{/bold}`,
     `  {yellow-fg} Добыто блоков:{/yellow-fg}  {bold}${monitorData.totalBlocks}{/bold}`,
     `  {magenta-fg} Средняя скорость:{/magenta-fg}  {bold}${avgRate} блоков/час{/bold}`,
     `  {white-fg} Текущая скорость:{/white-fg}  {bold}${formatBlocksPerSecond(currentRate)}{/bold}`,
     `  {white-fg} За минуту:{/white-fg}  {bold}${formatBlocksPerMinute(currentRatePerMinute)}{/bold}`,
-    `  {blue-fg} Ротация:{/blue-fg}  {bold}каждые ${Math.round(PERIODIC_REJOIN_MS / 60000)} РјРёРЅ{/bold}`,
+    `  {blue-fg} Ротация:{/blue-fg}  {bold}каждые ${Math.round(PERIODIC_REJOIN_MS / 60000)} мин{/bold}`,
     `  {${diggingPaused ? 'red' : 'green'}-fg} Копание:{/}  {bold}${diggingPaused ? 'ПАУЗА' : 'АКТИВНО'}{/bold}`
   ].join('\n'))
   return
 
   infoBox.setContent(`
-  {cyan-fg}  Время работы:{/cyan-fg}  {bold}${hours}ч ${minutes}Рј ${seconds}с{/bold}
+  {cyan-fg}  Время работы:{/cyan-fg}  {bold}${hours}ч ${minutes}м ${seconds}с{/bold}
   {green-fg} Боты активны:{/green-fg}  {bold}${activeBots}/${totalBots}{/bold}
   {yellow-fg}  Добыто блоков:{/yellow-fg}  {bold}${monitorData.totalBlocks}{/bold}
   {magenta-fg} Средняя скорость:{/magenta-fg}  {bold}${avgRate} блоков/час{/bold}
   {white-fg} Текущая скорость:{/white-fg}  {bold}${formatBlocksPerSecond(currentRate)}{/bold}
-  {blue-fg} Ротация:{/blue-fg}  {bold}каждые ${Math.round(PERIODIC_REJOIN_MS/60000)} РјРёРЅ{/bold}
+  {blue-fg} Ротация:{/blue-fg}  {bold}каждые ${Math.round(PERIODIC_REJOIN_MS/60000)} мин{/bold}
   {${diggingPaused ? 'red' : 'green'}-fg}  Копание:{/}  {bold}${diggingPaused ? 'ПАУЗА' : 'АКТИВНО'}{/bold}
   `)
 }
@@ -855,7 +942,7 @@ function addChatLog(botName, message, source = 'server-message', details = {}) {
   const now = new Date()
   const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
 
-  emitRuntimeEvent('chat', {
+  const entry = {
     botName,
     source,
     position: details.position,
@@ -864,7 +951,10 @@ function addChatLog(botName, message, source = 'server-message', details = {}) {
     rawMessage: message,
     time,
     timestamp: now.toISOString()
-  })
+  }
+
+  emitRuntimeEvent('chat', entry)
+  writeToChatLogFile(entry)
 }
 
 function updateBotStatus(botName, status, data = {}) {
@@ -1054,7 +1144,6 @@ function updateUI() {
 }
 
 // ============================================================================
-// Р С’Р вЂ™Р СћР С›Р СљР С’Р СћР ВР В§Р вЂўР РЋР С™Р ВР в„ў Р СџР вЂўР В Р вЂўР вЂ”Р С’Р СџР Р€Р РЋР С™ Р вЂ”Р С’Р РЋР СћР В Р Р‡Р вЂ™Р РЃР ВР Тђ Р вЂР С›Р СћР С›Р вЂ™
 // ============================================================================
 function checkAndRestartStuckBots() {
   if (!runtimeEnabled || shuttingDown) return
@@ -1068,9 +1157,16 @@ function checkAndRestartStuckBots() {
         const reconnectPending = typeof botObj.hasReconnectPending === 'function'
           ? botObj.hasReconnectPending()
           : Boolean(botObj.hasReconnectPending)
+        const botFilterBusy = typeof botObj.isBotFilterBusy === 'function'
+          ? botObj.isBotFilterBusy()
+          : Boolean(botObj.isBotFilterBusy)
+        const lifecycle = typeof botObj.getLifecycleSnapshot === 'function'
+          ? botObj.getLifecycleSnapshot()
+          : { state: 'unknown', ageMs: 0 }
+        const lifecycleBusy = lifecycle.state === 'botfilter' || lifecycle.state === 'waiting-reconnect'
         const recoverableStatus = botData.status === 'оффлайн' || botData.status === 'ожидание'
         
-        if (timeSinceLastBlock > OFFLINE_WATCHDOG_MS && recoverableStatus && !reconnectPending) {
+        if (timeSinceLastBlock > OFFLINE_WATCHDOG_MS && recoverableStatus && !reconnectPending && !botFilterBusy && !lifecycleBusy) {
           addLog('warning', 'SYSTEM', `Бот ${botObj.username} застрял офлайн (${Math.round(timeSinceLastBlock/1000)}с) - перезапуск`)
           
           const cfg = botsConfigs.find(c => c.username === botObj.username)
@@ -1095,7 +1191,6 @@ function checkAndRestartStuckBots() {
 setInterval(checkAndRestartStuckBots, OFFLINE_WATCHDOG_INTERVAL_MS)
 
 // ============================================================================
-// Р вЂєР С›Р вЂњР ВР С™Р С’ Р вЂР С›Р СћР С›Р вЂ™
 // ============================================================================
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -1211,13 +1306,12 @@ function fullRestart(reason = 'manual') {
 }
 
 // ============================================================================
-// Р Р€Р вЂєР Р€Р В§Р РЃР вЂўР СњР СњР С’Р Р‡ Р РЋР ВР РЋР СћР вЂўР СљР С’ Р В Р С›Р СћР С’Р В¦Р ВР В Р вЂР С›Р СћР С›Р вЂ™
 // ============================================================================
 async function rotateBots() {
   if (rotationInProgress || activeBots.length === 0) return
   rotationInProgress = true
   
-  addLog('info', 'ROTATION', ` Начинаю плановую ротацию ботов (интервал: ${Math.round(PERIODIC_REJOIN_MS/60000)} РјРёРЅ)`)
+  addLog('info', 'ROTATION', ` Начинаю плановую ротацию ботов (интервал: ${Math.round(PERIODIC_REJOIN_MS/60000)} мин)`)
   
   const onlineBots = activeBots.filter(b => b.bot && b.bot.entity && b.isOnline)
   
@@ -1333,10 +1427,10 @@ function gracefulShutdown(signal = 'SIGTERM', exitCode = 0) {
 }
 
 // ============================================================================
-// Р РЋР С›Р вЂ”Р вЂќР С’Р СњР ВР вЂў Р вЂР С›Р СћР С’
 // ============================================================================
 function createBot(cfg) {
   const username = cfg.username
+  const speedGuardProfile = getSpeedGuardProfile(username)
   const blocksToMine = cfg.blocksToMine
   const miningTargets = blocksToMine.map(({ x, y, z }) => vec3(x, y, z))
   const miningTargetKeys = new Set(blocksToMine.map(({ x, y, z }) => `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`))
@@ -1349,7 +1443,7 @@ function createBot(cfg) {
   
   let bot = null
   let menuTimer = null, reconnectTimer = null, reconnectGraceTimer = null
-  let positionCheckTimer = null, positionCheckStartTimer = null, preventiveRestartTimer = null
+  let positionCheckTimer = null, positionCheckStartTimer = null
   let speedGuardTimer = null
   let fallCheckTimer = null, limboFallStartTimer = null, limboFallIntervalTimer = null, limboFallTimeoutTimer = null
   let keepAliveTimer = null, fullServerRetryTimer = null
@@ -1367,6 +1461,7 @@ function createBot(cfg) {
   let isReturningToPosition = false
   let reconnectScheduled = false
   let reconnectDueAt = 0
+  let reconnectReason = ''
   let waitingForFall = false
   let initialY = null
   let fallCheckPassed = false
@@ -1378,7 +1473,12 @@ function createBot(cfg) {
   let scannerHoldUntil = 0
   let lastScannerLogAt = 0
   let scannerWaitChallengeActive = false
+  let limboSuccessSeen = false
   let lastLimboPositionPacket = null
+  let botFilterRetryCount = Number(botFilterRetryStates.get(username)?.retryCount) || 0
+  let botFilterLastFailureAt = Number(botFilterRetryStates.get(username)?.lastFailureAt) || 0
+  let lifecycleState = 'connecting'
+  let lifecycleStateChangedAt = Date.now()
   let isRotating = false
   let lastKeepAlive = Date.now()
   let botHandle = null
@@ -1406,6 +1506,26 @@ function createBot(cfg) {
   let openServerMenuItem = async (source = 'uninitialized') => {
     diagEvent('menu-open-unavailable', { source })
     return false
+  }
+
+  function setLifecycleState(nextState, source = 'unknown', details = {}) {
+    if (lifecycleState === nextState) return
+    const previousState = lifecycleState
+    lifecycleState = nextState
+    lifecycleStateChangedAt = Date.now()
+    diagEvent('lifecycle-state', {
+      previousState,
+      state: lifecycleState,
+      source,
+      ...details
+    })
+  }
+
+  function getLifecycleSnapshot() {
+    return {
+      state: lifecycleState,
+      ageMs: Date.now() - lifecycleStateChangedAt
+    }
   }
   let packetOnlyStartedAt = 0
   let speedGuardStartedAt = 0
@@ -1636,6 +1756,7 @@ function createBot(cfg) {
     lastEmptyTargetsLogAt = 0
     packetOnlyStartedAt = PACKET_ONLY_MINING ? now : 0
     refreshActiveStandPositionFromMining(source)
+    recordSpeedGuardProgress(speedGuardProfile, now)
 
     if (!positionConfirmed) {
       positionConfirmed = true
@@ -1672,31 +1793,41 @@ function createBot(cfg) {
     const botData = monitorData.bots[username]
     if (!botData) return 0
 
-    const shortWindowRate = (Number(botData.blocksPerSecond) || 0) * 60
-    return Number.isFinite(shortWindowRate) ? shortWindowRate : 0
+    const stats = computeBotRateStats(botData.blockTimes, Date.now(), getSpeedGuardRateWindowMs())
+    const stableWindowRate = (Number(stats.blocksPerSecond) || 0) * 60
+    return Number.isFinite(stableWindowRate) ? stableWindowRate : 0
   }
 
   function getSpeedGuardPeak() {
-    return Math.max(0, Number(speedGuardPeakRates.get(username)) || 0)
+    return Math.max(0, Number(speedGuardProfile.peakRatePerMinute) || 0)
   }
 
   function rememberSpeedGuardPeak(ratePerMinute) {
-    if (!Number.isFinite(ratePerMinute) || ratePerMinute < SPEED_GUARD_MIN_LEARN_RATE) {
-      return getSpeedGuardPeak()
-    }
-
-    const currentPeak = getSpeedGuardPeak()
-    if (ratePerMinute > currentPeak) {
-      speedGuardPeakRates.set(username, ratePerMinute)
-      return ratePerMinute
-    }
-
-    return currentPeak
+    return rememberAdaptiveSpeedGuardPeak(speedGuardProfile, ratePerMinute, Date.now(), getSpeedGuardRateMemoryMs())
   }
 
   function getSpeedGuardTarget() {
-    const learnedTarget = getSpeedGuardPeak() * SPEED_GUARD_TARGET_RATIO
-    return Math.max(SPEED_GUARD_MIN_BLOCKS_PER_MIN, learnedTarget)
+    return getSpeedGuardTargetRate(speedGuardProfile, SPEED_GUARD_TARGET_RATIO)
+  }
+
+  function getSpeedGuardRateWindowMs() {
+    return getAdaptiveRateWindowMs(speedGuardProfile, SPEED_GUARD_RATE_WINDOW_MS)
+  }
+
+  function getSpeedGuardRateMemoryMs() {
+    return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_RATE_WINDOW_MS * 4, 12)
+  }
+
+  function getSpeedGuardLowRateMs() {
+    return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_LOW_RATE_MS, 2)
+  }
+
+  function getSpeedGuardButtonIdleMs() {
+    return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_BUTTON_IDLE_MS, 2)
+  }
+
+  function getSpeedGuardNoProgressReconnectMs() {
+    return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_NO_PROGRESS_RECONNECT_MS, 4)
   }
 
   function resetSpeedGuardLowState() {
@@ -1719,30 +1850,42 @@ function createBot(cfg) {
 
     speedGuardLastRecoveryAt = now
     speedGuardRecoveries += 1
+    const recoveryAttempt = Math.min(speedGuardRecoveries, SPEED_GUARD_RECONNECT_AFTER_RECOVERIES)
+    const buttonIdleMs = getSpeedGuardButtonIdleMs()
+    const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
 
     const idleFor = getMiningProgressAgeMs(now)
     const emptyTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'empty')
     const unloadedTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
     const rateText = `${Math.round(currentRate)}<${Math.round(targetRate)} б/м`
+    const shouldLogRecoveryWarning =
+      emptyTargets ||
+      unloadedTargets ||
+      !digLoopRunning ||
+      (Number.isFinite(idleFor) && idleFor >= 3000)
 
-    addLog(
-      'warning',
-      username,
-      `Speed-guard: просадка ${rateText}, простой ${Number.isFinite(idleFor) ? Math.round(idleFor / 1000) : '?'}с -> восстановление ${speedGuardRecoveries}/${SPEED_GUARD_RECONNECT_AFTER_RECOVERIES}`
-    )
+    if (shouldLogRecoveryWarning) {
+      addLog(
+        'warning',
+        username,
+        `Speed-guard: просадка ${rateText}, простой ${Number.isFinite(idleFor) ? Math.round(idleFor / 1000) : '?'}с -> восстановление ${recoveryAttempt}/${SPEED_GUARD_RECONNECT_AFTER_RECOVERIES}`
+      )
+    }
 
     diagEvent('speed-guard-recovery', {
       currentRate,
       targetRate,
       peakRate: getSpeedGuardPeak(),
       idleFor,
+      buttonIdleMs,
+      noProgressReconnectMs,
       recoveries: speedGuardRecoveries,
       emptyTargets,
       unloadedTargets,
       targets: snapshot?.all?.map(formatTargetSnapshot)
     })
 
-    if (unloadedTargets && Number.isFinite(idleFor) && idleFor >= SPEED_GUARD_BUTTON_IDLE_MS) {
+    if (unloadedTargets && Number.isFinite(idleFor) && idleFor >= buttonIdleMs) {
       const confirmed = await confirmFarCoordinateState(expectedSessionEpoch, 'speed-guard-unloaded')
       if (confirmed.confirmed) {
         reconnectBecauseCoordinateFar(confirmed.health, 'speed-guard-unloaded')
@@ -1754,7 +1897,7 @@ function createBot(cfg) {
       entryButtonPosition &&
       emptyTargets &&
       Number.isFinite(idleFor) &&
-      idleFor >= SPEED_GUARD_BUTTON_IDLE_MS &&
+      idleFor >= buttonIdleMs &&
       !entryButtonFlowRunning
     ) {
       addLog('warning', username, 'Speed-guard: шахта пустая, повторяю кнопку генератора')
@@ -1779,12 +1922,24 @@ function createBot(cfg) {
 
     const burstPackets = await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 900))
     if (burstPackets > 0) {
+      resetSpeedGuardLowState()
+      return
+    }
+
+    if (Number.isFinite(idleFor) && idleFor < noProgressReconnectMs) {
+      diagEvent('speed-guard-reconnect-skipped-active-progress', {
+        currentRate,
+        targetRate,
+        idleFor,
+        noProgressReconnectMs,
+        recoveries: speedGuardRecoveries
+      })
       return
     }
 
     if (
       speedGuardRecoveries >= SPEED_GUARD_RECONNECT_AFTER_RECOVERIES ||
-      (Number.isFinite(idleFor) && idleFor >= SPEED_GUARD_NO_PROGRESS_RECONNECT_MS)
+      (Number.isFinite(idleFor) && idleFor >= noProgressReconnectMs)
     ) {
       addLog('warning', username, 'Speed-guard: мягкое восстановление не помогло -> быстрый перезаход')
       updateBotStatus(username, 'ожидание')
@@ -1831,21 +1986,35 @@ function createBot(cfg) {
       const peakRate = rememberSpeedGuardPeak(currentRate)
       const targetRate = getSpeedGuardTarget()
       const progressAge = getMiningProgressAgeMs(now)
+      const rateWindowMs = getSpeedGuardRateWindowMs()
+      const rateMemoryMs = getSpeedGuardRateMemoryMs()
+      const lowRateMs = getSpeedGuardLowRateMs()
+      const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
 
-      const isHealthyRate = currentRate >= targetRate
-      const hasFreshProgress = Number.isFinite(progressAge) && progressAge <= SPEED_WINDOW_MS
-      if (isHealthyRate || (hasFreshProgress && peakRate < SPEED_GUARD_MIN_LEARN_RATE)) {
+      const hasFreshProgress = Number.isFinite(progressAge) && progressAge <= Math.max(rateWindowMs, lowRateMs)
+      const isLearningBaseline = targetRate <= 0
+      const isHealthyRate = targetRate > 0 && currentRate >= targetRate
+      if (isHealthyRate || (isLearningBaseline && hasFreshProgress)) {
         resetSpeedGuardLowState()
         return
       }
 
       if (!speedGuardLowSince) {
         speedGuardLowSince = now
-        diagEvent('speed-guard-low-rate-start', { currentRate, targetRate, peakRate, progressAge })
+        diagEvent('speed-guard-low-rate-start', {
+          currentRate,
+          targetRate,
+          peakRate,
+          progressAge,
+          rateWindowMs,
+          rateMemoryMs,
+          lowRateMs,
+          noProgressReconnectMs
+        })
         return
       }
 
-      if (now - speedGuardLowSince < SPEED_GUARD_LOW_RATE_MS && progressAge < SPEED_GUARD_NO_PROGRESS_RECONNECT_MS) {
+      if (now - speedGuardLowSince < lowRateMs && progressAge < noProgressReconnectMs) {
         return
       }
 
@@ -1868,9 +2037,13 @@ function createBot(cfg) {
       })
     }, SPEED_GUARD_INTERVAL_MS)
     diagEvent('speed-guard-started', {
+      adaptive: true,
       intervalMs: SPEED_GUARD_INTERVAL_MS,
       startGraceMs: SPEED_GUARD_START_GRACE_MS,
-      minBlocksPerMin: SPEED_GUARD_MIN_BLOCKS_PER_MIN,
+      rateWindowMs: getSpeedGuardRateWindowMs(),
+      rateMemoryMs: getSpeedGuardRateMemoryMs(),
+      lowRateMs: getSpeedGuardLowRateMs(),
+      noProgressReconnectMs: getSpeedGuardNoProgressReconnectMs(),
       targetRatio: SPEED_GUARD_TARGET_RATIO,
       peakRate: getSpeedGuardPeak()
     })
@@ -1880,6 +2053,13 @@ function createBot(cfg) {
     if (menuStage === stage) return
     menuStage = stage
     menuStageStartedAt = Date.now()
+    if (stage === 'chat-captcha-hold') {
+      setLifecycleState('botfilter', source, { menuStage: stage })
+    } else if (stage === 'joined') {
+      setLifecycleState('joining', source, { menuStage: stage })
+    } else if (stage !== 'idle') {
+      setLifecycleState('menu', source, { menuStage: stage })
+    }
     diagEvent('menu-stage', { stage, source })
   }
 
@@ -2016,6 +2196,10 @@ function createBot(cfg) {
     joinedSubserver = true
     subserverJoinSeq += 1
     menuRecoveryCount = 0
+    botFilterRetryCount = 0
+    botFilterLastFailureAt = 0
+    botFilterRetryStates.delete(username)
+    setLifecycleState('joining', 'subserver-join')
     setMenuStage('joined', 'subserver-join')
     positionConfirmed = false
     entryButtonPressedThisJoin = false
@@ -3015,6 +3199,7 @@ function createBot(cfg) {
 
   function resetSessionState() {
     invalidateSession()
+    setLifecycleState('connecting', 'reset-session')
     joinedSubserver = false
     spawnGraceUntil = 0
     isReturningToPosition = false
@@ -3037,6 +3222,7 @@ function createBot(cfg) {
     scannerHoldUntil = 0
     lastScannerLogAt = 0
     scannerWaitChallengeActive = false
+    limboSuccessSeen = false
     lastLimboPositionPacket = null
     try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
     limboFallStartTimer = null
@@ -3069,6 +3255,7 @@ function createBot(cfg) {
     cleanupTimers()
     resetSessionState()
     reconnectScheduled = false
+    reconnectReason = ''
     try { if (bot) bot.removeAllListeners() } catch(e){}
     try { if (bot) bot.quit() } catch(e){}
     bot = null
@@ -3079,7 +3266,6 @@ function createBot(cfg) {
     try { if (menuTimer) clearTimeout(menuTimer) } catch(e){}
     try { if (positionCheckTimer) clearInterval(positionCheckTimer) } catch(e){}
     try { if (positionCheckStartTimer) clearTimeout(positionCheckStartTimer) } catch(e){}
-    try { if (preventiveRestartTimer) clearTimeout(preventiveRestartTimer) } catch(e){}
     try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
     try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
     try { if (limboFallIntervalTimer) clearInterval(limboFallIntervalTimer) } catch(e){}
@@ -3095,7 +3281,6 @@ function createBot(cfg) {
     menuTimer = null
     positionCheckTimer = null
     positionCheckStartTimer = null
-    preventiveRestartTimer = null
     fallCheckTimer = null
     limboFallStartTimer = null
     limboFallIntervalTimer = null
@@ -3120,7 +3305,6 @@ function createBot(cfg) {
     try { if (reconnectGraceTimer) clearTimeout(reconnectGraceTimer) } catch(e){}
     try { if (positionCheckTimer) clearInterval(positionCheckTimer) } catch(e){}
     try { if (positionCheckStartTimer) clearTimeout(positionCheckStartTimer) } catch(e){}
-    try { if (preventiveRestartTimer) clearTimeout(preventiveRestartTimer) } catch(e){}
     try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
     try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
     try { if (limboFallIntervalTimer) clearInterval(limboFallIntervalTimer) } catch(e){}
@@ -3138,7 +3322,6 @@ function createBot(cfg) {
     reconnectGraceTimer = null
     positionCheckTimer = null
     positionCheckStartTimer = null
-    preventiveRestartTimer = null
     fallCheckTimer = null
     limboFallStartTimer = null
     limboFallIntervalTimer = null
@@ -3156,6 +3339,7 @@ function createBot(cfg) {
     entryButtonFlowRunning = false
     reconnectScheduled = false
     reconnectDueAt = 0
+    reconnectReason = ''
     retryingFullServer = false
     fallCheckActive = false
   }
@@ -3204,7 +3388,7 @@ function createBot(cfg) {
       const targetPosition = buttonBlock.position.offset(0.5, 0.5, 0.5)
       const distance = bot.entity.position.distanceTo(targetPosition)
       if (distance > 4.7) {
-        addLog('warning', username, `Кнопка генератора слишком далеко: ${distance.toFixed(2)}Рј`)
+        addLog('warning', username, `Кнопка генератора слишком далеко: ${distance.toFixed(2)}м`)
         diagEvent('entry-button-too-far', { distance, targetPosition })
         return false
       }
@@ -3345,17 +3529,6 @@ function createBot(cfg) {
       startPositionCheck()
     }
 
-    if (!preventiveRestartTimer) {
-      preventiveRestartTimer = setTimeout(() => {
-        if (!isCurrentSession(flowSessionEpoch) || !joinedSubserver) return
-        addLog('info', username, 'Превентивный перезапуск (1 час)')
-        updateBotStatus(username, 'ожидание')
-        cleanupTimers()
-        backoff = 5000 + Math.floor(Math.random() * 5000)
-        scheduleReconnectLocal(backoff, true, 'periodic-rejoin')
-      }, PERIODIC_REJOIN_MS)
-    }
-
     scheduleEntryButtonWatchdog(flowSessionEpoch)
 
     try { if (postJoinStartTimer) clearTimeout(postJoinStartTimer) } catch(e){}
@@ -3376,7 +3549,6 @@ function createBot(cfg) {
   }
 
   // ============================================================================
-  // KEEP-ALIVE Р СљР С›Р СњР ВР СћР С›Р В Р ВР СњР вЂњ
   // ============================================================================
   function startKeepAliveMonitor() {
     if (keepAliveTimer) clearInterval(keepAliveTimer)
@@ -3402,7 +3574,6 @@ function createBot(cfg) {
   }
 
   // ============================================================================
-  // Р СџР В Р С›Р вЂ™Р вЂўР В Р С™Р С’ Р В Р вЂ™Р С›Р вЂ”Р вЂ™Р В Р С’Р Сћ Р СњР С’ Р СџР С›Р вЂ”Р ВР В¦Р ВР В®
   // ============================================================================
   async function walkToActiveStandPosition() {
     const initialDelta = getStandDelta()
@@ -3568,7 +3739,6 @@ function createBot(cfg) {
   function startPositionCheck() {
     if (!standPosition || !joinedSubserver || positionCheckTimer || positionCheckStartTimer) return
 
-    // Р вЂ”Р В°Р Т‘Р ВµРЎР‚Р В¶Р С”Р В° 30РЎРѓ Р С—Р ВµРЎР‚Р ВµР Т‘ started Р С—Р С•Р В·Р С‘РЎвЂ Р С‘Р С•Р Р…Р Р…Р С•Р в„– Р С—РЎР‚Р С•Р Р†Р ВµРЎР‚Р С”Р С‘
     positionCheckStartTimer = setTimeout(() => {
       positionCheckStartTimer = null
       if (!joinedSubserver || positionCheckTimer) return
@@ -3582,7 +3752,6 @@ function createBot(cfg) {
   }
 
   // ============================================================================
-  // Р С›Р вЂР ТђР С›Р вЂќ LIMBOFILTER
   // ============================================================================
   function encodeVarInt(value) {
     const bytes = []
@@ -3697,38 +3866,15 @@ function createBot(cfg) {
     fallCheckPassed = true
     fallCheckActive = false
     initialY = null
+    setLifecycleState('menu', source, { limboComplete: true })
     diagEvent('limbo-complete-local', { source, ...details })
-  }
-
-  function getLimboFallSpeed(tick) {
-    return -((Math.pow(0.98, tick) - 1) * 3.92)
-  }
-
-  function normalizeLimboStartY(rawY) {
-    const y = Number(rawY)
-    if (!Number.isFinite(y)) return y
-
-    // ProstoCraft's LimboFilter uses the default 512 Y, but Mineflayer can
-    // report the first 1.16 position packet as 1024. Keep the real check path.
-    if (y >= 768 && y <= 4096) {
-      const halfY = y / 2
-      if (halfY >= 128 && halfY <= 2048) {
-        return halfY
-      }
-    }
-
-    return y
   }
 
   function startActiveFallCheck(start = {}) {
     const source = start.source || 'unknown'
     const canRunFallCheck = Boolean(
       FEATURE_ACTIVE_FALL_CHECK_ENABLED &&
-      (
-        ANTIBOT_FALL_CHECK_ENABLED ||
-        scannerWaitChallengeActive ||
-        source === 'scanner-message'
-      )
+      (scannerWaitChallengeActive || source === 'scanner-recent-position' || source === 'scanner-position-packet')
     )
     if (!canRunFallCheck) {
       diagEvent('limbo-active-fall-disabled', { source: start.source || 'unknown' })
@@ -3736,26 +3882,39 @@ function createBot(cfg) {
     }
     if (!bot || !bot._client || fallCheckActive || fallCheckPassed || joinedSubserver) return
     const fallSessionEpoch = sessionEpoch
-    const startX = Number.isFinite(Number(start.x)) ? Number(start.x) : bot.entity?.position?.x
-    const rawStartY = Number.isFinite(Number(start.y)) ? Number(start.y) : bot.entity?.position?.y
-    const startY = normalizeLimboStartY(rawStartY)
-    const startZ = Number.isFinite(Number(start.z)) ? Number(start.z) : bot.entity?.position?.z
-    if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(startZ)) return
+    const startX = Number(start.x)
+    const rawStartY = Number(start.y)
+    const startY = rawStartY
+    const startZ = Number(start.z)
+    const teleportId = Number(start.teleportId)
+    if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(startZ) || !Number.isFinite(teleportId)) {
+      diagEvent('limbo-fall-start-rejected', {
+        source,
+        reason: 'missing-server-position-packet',
+        start
+      })
+      return false
+    }
 
     clearLimboTimers()
     pauseLimboPhysics(source)
     sendClientIdentityPackets(source)
-    confirmLimboTeleport(start.teleportId, source)
+    confirmLimboTeleport(teleportId, source)
 
     waitingForFall = true
     fallCheckPassed = false
     fallCheckActive = true
     initialY = startY
+    setLifecycleState('botfilter', source, { fallCheckActive: true })
 
     let tick = 0
     let currentY = startY
     const startedAt = Date.now()
-    const expectedTotalMs = LIMBO_FALL_TICKS * LIMBO_FALL_PACKET_MS
+    const finishPacketTicks = getFinishPacketTicks(LIMBO_FALL_TICKS)
+    const expectedTotalMs = Math.max(
+      getMinimumCheckMs({ fallingCheckTicks: LIMBO_FALL_TICKS, packetMs: LIMBO_FALL_PACKET_MS }),
+      finishPacketTicks * LIMBO_FALL_PACKET_MS
+    )
 
     addLog(
       'info',
@@ -3767,11 +3926,13 @@ function createBot(cfg) {
       startX,
       startY,
       rawStartY,
-      normalizedStartY: startY !== rawStartY,
+      normalizedStartY: false,
       startZ,
-      teleportId: start.teleportId,
+      teleportId,
       ticks: LIMBO_FALL_TICKS,
-      packetMs: LIMBO_FALL_PACKET_MS
+      finishPacketTicks,
+      packetMs: LIMBO_FALL_PACKET_MS,
+      serverTimeoutMs: LIMBO_SERVER_TIMEOUT_MS
     })
 
     const finishFallSequence = () => {
@@ -3782,21 +3943,49 @@ function createBot(cfg) {
 
       const elapsed = Date.now() - startedAt
       const totalFallen = initialY - currentY
-      const waitMs = Math.max(LIMBO_COMPLETION_GRACE_MS, expectedTotalMs - elapsed + LIMBO_COMPLETION_GRACE_MS)
-      addLog('success', username, `OK LimboFilter fall: ${tick} тиков, упал ${totalFallen.toFixed(1)}м, жду ${waitMs}мс`)
+      const responseWaitMs = Math.max(
+        LIMBO_COMPLETION_GRACE_MS,
+        LIMBO_SERVER_TIMEOUT_MS - elapsed + LIMBO_COMPLETION_GRACE_MS
+      )
+      addLog('success', username, `OK LimboFilter fall: ${tick} тиков, упал ${totalFallen.toFixed(1)}м, жду ответ сервера ${responseWaitMs}мс`)
       diagEvent('limbo-fall-sequence-sent', {
         tick,
         totalFallen,
         elapsed,
-        waitMs,
+        responseWaitMs,
+        expectedTotalMs,
         currentY
       })
 
       try { if (limboFallTimeoutTimer) clearTimeout(limboFallTimeoutTimer) } catch (error) {}
       limboFallTimeoutTimer = setTimeout(() => {
         if (!isCurrentSession(fallSessionEpoch) || joinedSubserver || fallCheckPassed) return
-        completeLimboWait('fall-sequence-sent', { tick, totalFallen, elapsed: Date.now() - startedAt })
-      }, waitMs)
+        const delay = getBotFilterReconnectDelay('limbo-fall-response-timeout')
+        logBotFilterReconnect('LimboFilter не ответил после fall-проверки', delay)
+        diagEvent('limbo-fall-response-timeout', {
+          tick,
+          totalFallen,
+          elapsed: Date.now() - startedAt,
+          botPosition: bot?.entity?.position
+        })
+        updateBotStatus(username, 'ожидание')
+        scheduleReconnectLocal(delay, true, 'limbo-fall-response-timeout')
+        cleanupActiveSessionTimers('limbo-fall-response-timeout')
+        waitingForFall = false
+        fallCheckPassed = false
+        fallCheckActive = false
+        scannerWaitChallengeActive = false
+        positionConfirmed = false
+        try {
+          if (bot?._client?.socket && !bot._client.socket.destroyed) {
+            bot._client.socket.end()
+          } else if (bot) {
+            bot.quit()
+          }
+        } catch (error) {
+          diagEvent('limbo-fall-timeout-close-error', { error })
+        }
+      }, responseWaitMs)
     }
 
     const sendFallTick = () => {
@@ -3807,13 +3996,17 @@ function createBot(cfg) {
       }
 
       tick += 1
-      const fallStep = getLimboFallSpeed(tick)
-      currentY -= fallStep
+      const fallPacket = createFallPacket({ x: startX, y: startY, z: startZ }, tick)
+      if (!fallPacket) {
+        addLog('warning', username, `Ошибка расчёта Limbo position на тике ${tick}`)
+        return
+      }
+      currentY = fallPacket.y
 
       const sent = writeClientPacket('position', {
-        x: startX,
-        y: currentY,
-        z: startZ,
+        x: fallPacket.x,
+        y: fallPacket.y,
+        z: fallPacket.z,
         onGround: false
       }, 'limbo-fall')
 
@@ -3821,12 +4014,12 @@ function createBot(cfg) {
         addLog('warning', username, `Ошибка отправки Limbo position на тике ${tick}`)
       }
 
-      if (tick === 1 || tick === 5 || tick === 10 || tick % 20 === 0 || tick === LIMBO_FALL_TICKS) {
+      if (tick === 1 || tick === 5 || tick === 10 || tick % 20 === 0 || tick === LIMBO_FALL_TICKS || tick === finishPacketTicks) {
         const fallen = initialY - currentY
-        addLog('info', username, `[Limbo ${tick}т] шаг ${fallStep.toFixed(3)}м, упал ${fallen.toFixed(1)}м`)
+        addLog('info', username, `[Limbo ${tick}т] шаг ${fallPacket.fallStep.toFixed(3)}м, упал ${fallen.toFixed(1)}м`)
       }
 
-      if (tick >= LIMBO_FALL_TICKS) {
+      if (tick >= finishPacketTicks) {
         finishFallSequence()
       }
     }
@@ -3834,14 +4027,15 @@ function createBot(cfg) {
     limboFallIntervalTimer = setInterval(sendFallTick, LIMBO_FALL_PACKET_MS)
     limboFallTimeoutTimer = setTimeout(() => {
       if (!isCurrentSession(fallSessionEpoch) || joinedSubserver || fallCheckPassed) return
-      addLog('warning', username, 'LimboFilter fall hard-timeout -> разрешаю меню и жду сервер')
-      completeLimboWait('fall-hard-timeout', { tick, currentY })
-    }, Math.max(15000, LIMBO_FALL_TICKS * LIMBO_FALL_PACKET_MS + 6000))
+      const delay = getBotFilterReconnectDelay('limbo-fall-hard-timeout')
+      logBotFilterReconnect('LimboFilter fall hard-timeout', delay)
+      scheduleReconnectLocal(delay, true, 'limbo-fall-hard-timeout')
+    }, Math.max(LIMBO_SERVER_TIMEOUT_MS, finishPacketTicks * LIMBO_FALL_PACKET_MS + 6000))
     return true
   }
 
   function handleLimboPositionPacket(packet) {
-    if (!ACTIVE_FALL_CHECK_ENABLED && !scannerWaitChallengeActive) return
+    if (!scannerWaitChallengeActive) return
     if (!packet || joinedSubserver || fallCheckPassed) return
     const x = Number(packet.x)
     const y = Number(packet.y)
@@ -3874,7 +4068,7 @@ function createBot(cfg) {
       yaw: packet.yaw,
       pitch: packet.pitch
     })
-    startActiveFallCheck({ x, y, z, teleportId, source: 'position-packet' })
+    startActiveFallCheck({ x, y, z, teleportId, source: 'scanner-position-packet' })
   }
 
   async function waitForLimboBeforeMenu(expectedSessionEpoch) {
@@ -3902,38 +4096,14 @@ function createBot(cfg) {
   }
 
   function startLimboFilterBypass() {
-    if (!ACTIVE_FALL_CHECK_ENABLED) {
-      waitingForFall = false
-      fallCheckPassed = false
-      fallCheckActive = false
-      diagEvent('limbo-passive-mode', {
-        fallCheckEnabled: ANTIBOT_FALL_CHECK_ENABLED,
-        enableActiveFallCheck: FEATURE_ACTIVE_FALL_CHECK_ENABLED
-      })
-      return
-    }
-    if (fallCheckPassed || fallCheckActive || joinedSubserver) return
-    const limboSessionEpoch = sessionEpoch
-
-    addLog('info', username, `Проверка наличия LimboFilter (${LIMBO_FALL_TICKS}т/${LIMBO_FALL_PACKET_MS}мс)...`)
-    waitingForFall = true
+    waitingForFall = false
     fallCheckPassed = false
     fallCheckActive = false
-    initialY = bot?.entity?.position?.y ?? null
-    pauseLimboPhysics('limbo-detect')
-    sendClientIdentityPackets('limbo-detect')
-    diagEvent('limbo-detect-start', {
+    sendClientIdentityPackets('spawn-identity')
+    diagEvent('limbo-message-gated-mode', {
       limboDetectionTimeoutMs: LIMBO_DETECTION_TIMEOUT_MS,
-      initialY
+      activeFallOnlyAfterMessage: true
     })
-
-    fallCheckTimer = setTimeout(() => {
-      if (!isCurrentSession(limboSessionEpoch)) return
-      if (waitingForFall && !fallCheckActive && !joinedSubserver && !fallCheckPassed) {
-        addLog('success', username, '+ LimboFilter не обнаружен или уже пропущен')
-        completeLimboWait('no-limbo-detector', { waitedMs: LIMBO_DETECTION_TIMEOUT_MS })
-      }
-    }, LIMBO_DETECTION_TIMEOUT_MS)
   }
 
   function scheduleReconnectLocal(delay = backoff, forcedReconnect = false, reason = 'unspecified') {
@@ -3951,6 +4121,7 @@ function createBot(cfg) {
       }
       reconnectScheduled = false
       reconnectDueAt = 0
+      reconnectReason = ''
       addLog('warning', username, 'Reconnect-флаг завис без таймера -> ставлю reconnect заново')
     }
 
@@ -3965,11 +4136,14 @@ function createBot(cfg) {
       return
     }
     
+    setLifecycleState('waiting-reconnect', reason, { delay, forcedReconnect })
     reconnectScheduled = true
+    reconnectReason = reason
 
     const graceDelay = getReconnectGraceDelay()
     if (graceDelay > 0 && !forcedReconnect) {
       reconnectScheduled = false
+      reconnectReason = ''
       diagEvent('reconnect-delayed-by-grace', { reason, graceDelay })
       
       if (!reconnectGraceTimer) {
@@ -3989,8 +4163,10 @@ function createBot(cfg) {
 
     reconnectTimer = setTimeout(() => {
       diagEvent('reconnect-start', { reason })
+      setLifecycleState('connecting', reason)
       reconnectScheduled = false
       reconnectDueAt = 0
+      reconnectReason = ''
       reconnectTimer = null
       
       cleanupTimers()
@@ -4019,6 +4195,7 @@ function createBot(cfg) {
         addLog('error', username, `Ошибка создания: ${e.message}`)
         diagEvent('reconnect-create-error', { reason, error: e })
         reconnectScheduled = false
+        reconnectReason = ''
         recreateRetryTimer = setTimeout(() => scheduleReconnectLocal(5000, true, `${reason}:create-retry`), 5000)
       }
     }, delay + jitter)
@@ -4064,18 +4241,6 @@ function createBot(cfg) {
     scheduleReconnectLocal(1500, true, `mid-session-${packetName}`)
   }
 
-  function isTooManyPacketsText(text) {
-    return Boolean(
-      text &&
-      (
-        text.includes('too many packets') ||
-        text.includes('sending too many') ||
-        text.includes('слишком много пакетов') ||
-        text.includes('много пакетов')
-      )
-    )
-  }
-
   function rescheduleReconnectLocal(delay, reason) {
     try { if (reconnectTimer) clearTimeout(reconnectTimer) } catch(e){}
     try { if (reconnectGraceTimer) clearTimeout(reconnectGraceTimer) } catch(e){}
@@ -4085,7 +4250,59 @@ function createBot(cfg) {
     recreateRetryTimer = null
     reconnectScheduled = false
     reconnectDueAt = 0
+    reconnectReason = ''
     scheduleReconnectLocal(delay, true, reason)
+  }
+
+  function applyReconnectDecision(decision, source = 'reconnect-policy') {
+    if (!decision || decision.action === 'ignore') return false
+
+    if (Array.isArray(decision.logs)) {
+      for (const entry of decision.logs) {
+        addLog(entry.level || 'info', username, entry.message)
+      }
+    }
+
+    if (decision.nextWaitKickCount !== undefined) {
+      waitKickCount = decision.nextWaitKickCount
+    }
+
+    if (decision.packetSafetySource) {
+      activatePacketSafetyMode(decision.packetSafetySource)
+    }
+
+    if (decision.stabilityCooldownReason) {
+      activateStabilityCooldown(
+        decision.stabilityCooldownReason,
+        decision.stabilityCooldownMs ?? CONNECTION_STABILITY_COOLDOWN_MS
+      )
+    }
+
+    if (decision.noteNoInternet) {
+      noteNoInternetError()
+    }
+
+    if (decision.action === 'stability-only') {
+      diagEvent('reconnect-policy-stability-only', { source, decision })
+      return true
+    }
+
+    if (decision.action === 'bot-filter') {
+      const delay = getBotFilterReconnectDelay(decision.botFilterReason)
+      backoff = delay
+      logBotFilterReconnect(decision.botFilterLogReason, delay)
+      scheduleReconnectLocal(delay, true, decision.scheduleReason)
+      return true
+    }
+
+    if (decision.action === 'schedule') {
+      backoff = decision.delay
+      scheduleReconnectLocal(decision.delay, decision.forced, decision.scheduleReason)
+      return true
+    }
+
+    diagEvent('reconnect-policy-unknown-action', { source, decision })
+    return false
   }
 
   function getMenuRecoveryDelay() {
@@ -4128,17 +4345,29 @@ function createBot(cfg) {
   }
 
   function handleTooManyPacketsNotice(source, rawText = '') {
-    activatePacketSafetyMode(source)
+    const decision = getReconnectDecision(
+      { type: 'too-many-packets-notice', source },
+      { random: Math.random }
+    )
     diagEvent('too-many-packets-notice', {
       source,
-      text: String(rawText || '').slice(0, 500)
+      text: String(rawText || '').slice(0, 500),
+      decision
     })
 
-    const delay = 12000 + Math.floor(Math.random() * 6000)
     updateBotStatus(username, 'ожидание')
 
     if (hasReconnectPendingLocal()) {
-      rescheduleReconnectLocal(delay, `too-many-packets-${source}`)
+      if (String(reconnectReason || '').startsWith('mid-session-')) {
+        diagEvent('too-many-packets-kept-fast-reconnect', {
+          source,
+          currentReason: reconnectReason,
+          ignoredDelay: decision.delay
+        })
+        return
+      }
+      if (decision.packetSafetySource) activatePacketSafetyMode(decision.packetSafetySource)
+      rescheduleReconnectLocal(decision.delay, decision.scheduleReason)
       return
     }
 
@@ -4148,7 +4377,7 @@ function createBot(cfg) {
     entryButtonPressedThisJoin = false
     entryButtonPressedJoinSeq = 0
     entryButtonFlowRunning = false
-    scheduleReconnectLocal(delay, true, `too-many-packets-${source}`)
+    applyReconnectDecision(decision, 'too-many-packets-notice')
   }
 
   function isAlreadyAuthorizedMessage(text) {
@@ -4179,6 +4408,20 @@ function createBot(cfg) {
     )
   }
 
+  function isLimboSuccessText(text) {
+    const normalized = String(text || '').toLowerCase()
+    return Boolean(
+      normalized.includes('отслеживается') ||
+      normalized.includes('проверка завершена') ||
+      normalized.includes('проверка успешно пройдена') ||
+      normalized.includes('successfully passed') ||
+      normalized.includes('passed bot-filter') ||
+      normalized.includes('passed the bot-filter') ||
+      normalized.includes('успешно прош') ||
+      normalized.includes('успешно пройд')
+    )
+  }
+
   function maybeSendLoginCommand(rawText, text) {
     if (!shouldSendLoginCommand(text)) return
 
@@ -4201,45 +4444,6 @@ function createBot(cfg) {
     }
   }
 
-  function isChatCaptchaText(text) {
-    const hasCaptcha = text.includes('капч') || text.includes('captcha')
-    const asksInChat =
-      (text.includes('введите') && text.includes('чат')) ||
-      (text.includes('enter') && (text.includes('chat') || text.includes('captcha'))) ||
-      text.includes('решите') ||
-      text.includes('solve')
-    const hasAttempts = text.includes('попыт') || text.includes('attempt')
-
-    return Boolean(
-      hasCaptcha &&
-      (asksInChat || hasAttempts)
-    )
-  }
-
-  function isScannerWaitText(text) {
-    if (isChatCaptchaText(text)) return false
-
-    const hasScanner =
-      text.includes('сканер') ||
-      text.includes('scanner') ||
-      text.includes('antibot') ||
-      text.includes('botfilter')
-    const waitForCheck =
-      text.includes('дождитесь окончания проверки') ||
-      (text.includes('дождитесь') && text.includes('провер')) ||
-      text.includes('please wait')
-    const noMove =
-      text.includes('не двигайтесь') ||
-      text.includes('don\'t move') ||
-      text.includes('do not move')
-
-    return Boolean(
-      hasScanner &&
-      waitForCheck &&
-      noMove
-    )
-  }
-
   function rememberLimboPositionPacket(packet) {
     if (!packet || typeof packet !== 'object') return
     const x = Number(packet.x)
@@ -4254,27 +4458,115 @@ function createBot(cfg) {
       teleportId,
       at: Date.now()
     }
+    if (
+      !joinedSubserver &&
+      !scannerWaitChallengeActive &&
+      !fallCheckActive &&
+      !fallCheckPassed &&
+      FEATURE_ACTIVE_FALL_CHECK_ENABLED &&
+      y >= 128
+    ) {
+      confirmLimboTeleport(teleportId, 'limbo-position-prep')
+      sendClientIdentityPackets('limbo-position-prep')
+      pauseLimboPhysics('limbo-position-prep')
+      if (!fallCheckTimer) {
+        fallCheckTimer = setTimeout(() => {
+          fallCheckTimer = null
+          if (!scannerWaitChallengeActive && !fallCheckActive && !joinedSubserver) {
+            restoreLimboPhysics('limbo-position-prep-timeout')
+          }
+        }, LIMBO_DETECTION_TIMEOUT_MS)
+      }
+    }
+  }
+
+  function getBotFilterReconnectDelay(reason = 'bot-filter') {
+    const now = Date.now()
+    const decision = calculateBotFilterReconnectDelay({
+      reason,
+      retryCount: botFilterRetryCount,
+      lastFailureAt: botFilterLastFailureAt,
+      now,
+      retryBaseMs: BOT_FILTER_RETRY_BASE_MS,
+      retryMaxMs: BOT_FILTER_RETRY_MAX_MS,
+      fallAttemptsBeforeHold: BOT_FILTER_FALL_ATTEMPTS_BEFORE_HOLD,
+      fallHoldMs: BOT_FILTER_FALL_HOLD_MS
+    })
+
+    botFilterRetryCount = decision.retryCount
+    botFilterLastFailureAt = decision.lastFailureAt
+    botFilterRetryStates.set(username, {
+      retryCount: botFilterRetryCount,
+      lastFailureAt: botFilterLastFailureAt
+    })
+
+    if (decision.fallHoldActive) {
+      diagEvent('bot-filter-fall-hold', {
+        reason,
+        retry: botFilterRetryCount,
+        delay: decision.delay,
+        threshold: BOT_FILTER_FALL_ATTEMPTS_BEFORE_HOLD
+      })
+      return decision.delay
+    }
+
+    diagEvent('bot-filter-reconnect-delay', {
+      reason,
+      retry: botFilterRetryCount,
+      delay: decision.delay
+    })
+
+    return decision.delay
   }
 
   function handleScannerWaitChallenge(rawText, source = 'server-message') {
     if (joinedSubserver || hasReconnectPendingLocal()) return
     const challengeSessionEpoch = sessionEpoch
+    setLifecycleState('botfilter', source, { challenge: 'fall-wait' })
     scannerWaitChallengeActive = true
-    lastLimboPositionPacket = null
     waitingForFall = true
     fallCheckPassed = false
     fallCheckActive = false
     try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch (error) {}
     limboFallStartTimer = null
 
-    const waitMs = Math.max(8000, LIMBO_MENU_WAIT_MS || 12000)
-    addLog('warning', username, `BotFilter: тип проверки = падение/ожидание, жду position-пакет Limbo до ${Math.round(waitMs / 1000)}с`)
+    const waitMs = SCANNER_POSITION_WAIT_MS
+    const recentPositionAgeMs = lastLimboPositionPacket?.at ? Date.now() - lastLimboPositionPacket.at : Infinity
+    const hasRecentPosition = Boolean(
+      lastLimboPositionPacket &&
+      Number.isFinite(recentPositionAgeMs) &&
+      recentPositionAgeMs <= SCANNER_RECENT_POSITION_MS
+    )
+    addLog('warning', username, `BotFilter: тип проверки = fall-проверка, жду position-пакет до ${Math.round(waitMs / 1000)}с`)
     diagEvent('bot-filter-classified', {
       type: 'fall-wait',
       source,
       waitMs,
+      passiveWaitLimitMs: SCANNER_PASSIVE_WAIT_MS,
+      recentPositionWindowMs: SCANNER_RECENT_POSITION_MS,
+      recentPositionAgeMs: Number.isFinite(recentPositionAgeMs) ? recentPositionAgeMs : null,
+      recentPosition: lastLimboPositionPacket,
       text: String(rawText || '').slice(0, 500)
     })
+
+    const startedFromRecentPosition = hasRecentPosition
+      ? startActiveFallCheck({
+          ...lastLimboPositionPacket,
+          source: 'scanner-recent-position'
+        })
+      : false
+
+    diagEvent('scanner-wait-position-packet', {
+      source,
+      waitMs,
+      passiveWait: false,
+      activeFallStarted: startedFromRecentPosition,
+      recentPositionAgeMs: Number.isFinite(recentPositionAgeMs) ? recentPositionAgeMs : null
+    })
+
+    if (startedFromRecentPosition) {
+      return
+    }
 
     limboFallStartTimer = setTimeout(() => {
       limboFallStartTimer = null
@@ -4283,14 +4575,15 @@ function createBot(cfg) {
         joinedSubserver ||
         hasReconnectPendingLocal() ||
         !scannerWaitChallengeActive ||
-        fallCheckActive ||
         fallCheckPassed
       ) {
         return
       }
+      if (fallCheckActive) return
 
-      addLog('warning', username, 'LimboFilter не прислал position-пакет - быстрый перезаход')
-      diagEvent('limbo-position-timeout', {
+      const delay = getBotFilterReconnectDelay('scanner-position-missing')
+      logBotFilterReconnect('BotFilter не прислал position-пакет для fall-проверки', delay)
+      diagEvent('scanner-position-missing', {
         source,
         waitMs,
         botPosition: bot?.entity?.position,
@@ -4298,8 +4591,8 @@ function createBot(cfg) {
       })
 
       updateBotStatus(username, 'ожидание')
-      scheduleReconnectLocal(5000, true, 'limbo-position-timeout')
-      cleanupActiveSessionTimers('limbo-position-timeout')
+      scheduleReconnectLocal(delay, true, 'scanner-position-missing')
+      cleanupActiveSessionTimers('scanner-position-missing')
       waitingForFall = false
       fallCheckPassed = false
       scannerWaitChallengeActive = false
@@ -4313,19 +4606,20 @@ function createBot(cfg) {
           bot.quit()
         }
       } catch (error) {
-        diagEvent('limbo-position-timeout-close-error', { error })
+        diagEvent('scanner-position-missing-close-error', { error })
       }
     }, waitMs)
   }
 
   function handleChatCaptchaChallenge(rawText, source = 'server-message') {
     const now = Date.now()
+    setLifecycleState('botfilter', source, { challenge: 'chat-captcha' })
     scannerHoldUntil = Math.max(scannerHoldUntil, now + CHAT_CAPTCHA_RECONNECT_MS)
     setMenuStage('chat-captcha-hold', source)
 
     if (now - lastScannerLogAt >= 30000) {
       lastScannerLogAt = now
-      addLog('warning', username, 'BotFilter: тип проверки = чат-капча, перезаход через 10 минут')
+      addLog('warning', username, `BotFilter: тип проверки = чат-капча, перезаход через ${Math.round(CHAT_CAPTCHA_RECONNECT_MS / 60000)} минут`)
     }
     diagEvent('chat-captcha-reconnect-hold', {
       source,
@@ -4359,9 +4653,41 @@ function createBot(cfg) {
     return scannerHoldUntil > Date.now()
   }
 
+  function isBotFilterBusy() {
+    return (
+      scannerHoldUntil > Date.now() ||
+      scannerWaitChallengeActive ||
+      waitingForFall ||
+      fallCheckActive ||
+      hasReconnectPendingLocal()
+    )
+  }
+
+  function isInBotFilterChallenge() {
+    return !joinedSubserver && (
+      scannerWaitChallengeActive ||
+      waitingForFall ||
+      fallCheckActive ||
+      fallCheckPassed ||
+      scannerHoldUntil > Date.now()
+    )
+  }
+
+  function logBotFilterReconnect(reasonText, delay) {
+    const fallHoldActive = botFilterRetryCount >= BOT_FILTER_FALL_ATTEMPTS_BEFORE_HOLD && delay >= BOT_FILTER_FALL_HOLD_MS
+    addLog(
+      'warning',
+      username,
+      fallHoldActive
+        ? `LimboFilter: ${botFilterRetryCount} fall-проверки не прошли -> пауза ${Math.round(delay / 60000)} мин, чтобы не ловить чат-капчу`
+        : `${reasonText} -> перезаход через ${Math.round(delay / 1000)}с (попытка ${botFilterRetryCount})`
+    )
+  }
+
   function startClient() {
     const botOptions = {
       host: SERVER_HOST,
+      port: SERVER_PORT,
       username,
       auth: 'offline',
       version: MC_VERSION,
@@ -4371,6 +4697,7 @@ function createBot(cfg) {
 
     diagEvent('client-create-start', {
       host: SERVER_HOST,
+      port: SERVER_PORT,
       version: MC_VERSION,
       standPosition,
       entryButtonPosition,
@@ -4498,6 +4825,7 @@ function createBot(cfg) {
     bot.once('spawn', async () => {
       const spawnSessionEpoch = sessionEpoch
       addLog('success', username, 'Подключен к серверу')
+      setLifecycleState('connecting', 'bot-spawn')
       diagEvent('bot-spawn', { spawnSessionEpoch })
       updateBotStatus(username, 'подключается')
       isOnline = true
@@ -4880,13 +5208,27 @@ function createBot(cfg) {
         maybeSendLoginCommand(rawText, text)
 
         if (!joinedSubserver) {
-          if (isChatCaptchaText(text)) {
-            const shouldAcceptChatCaptcha =
-              isVisibleChatMessage &&
-              !fallCheckActive &&
-              !waitingForFall
+          const botFilterMessageKind = classifyBotFilterMessage(text)
 
-            if (shouldAcceptChatCaptcha) {
+          if (botFilterMessageKind !== 'none') {
+            addLog(
+              'info',
+              username,
+              `BotFilter evidence: ${botFilterMessageKind}, source=${messageSource}, position=${messagePosition}, text="${rawText.slice(0, 240)}"`
+            )
+            diagEvent('bot-filter-message-evidence', {
+              kind: botFilterMessageKind,
+              source: messageSource,
+              position: messagePosition,
+              visibleChat: isVisibleChatMessage,
+              sender: sender ? String(sender) : undefined,
+              text: rawText.slice(0, 1000),
+              json: messageJson
+            })
+          }
+
+          if (botFilterMessageKind === 'chat-captcha') {
+            if (isVisibleChatMessage) {
               handleChatCaptchaChallenge(rawText, messageSource)
               return
             }
@@ -4903,7 +5245,7 @@ function createBot(cfg) {
             return
           }
 
-          if (isScannerWaitText(text)) {
+          if (botFilterMessageKind === 'fall-wait') {
             handleScannerWaitChallenge(rawText, messageSource)
             return
           }
@@ -4923,22 +5265,27 @@ function createBot(cfg) {
           startFullServerRetry()
         }
         
-        if (!joinedSubserver && text.includes('отслеживается')) {
+        if (!joinedSubserver && isLimboSuccessText(text)) {
+          limboSuccessSeen = true
           scannerHoldUntil = 0
           scannerWaitChallengeActive = false
           stopFullServerRetry()
-          completeLimboWait('subserver-tracked-message')
-          beginSubserverJoin()
-          waitKickCount = 0          // Р РЋР В±РЎР‚Р С•РЎРѓ РЎРѓРЎвЂЎРЎвЂРЎвЂљРЎвЂЎР С‘Р С”Р В° Р С”Р С‘Р С”Р С•Р Р† Р С—РЎР‚Р С‘ РЎС“РЎРѓР С—Р ВµРЎв‚¬Р Р…Р С•Р С Р Р†РЎвЂ¦Р С•Р Т‘Р Вµ
-          addLog('success', username, 'Зашёл на подсервер')
+          completeLimboWait('limbo-success-message')
+          waitKickCount = 0
           updateBotStatus(username, 'ожидание')
           try { if (menuTimer) clearTimeout(menuTimer) } catch(e){}
           try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
           
           waitingForFall = false
           fallCheckPassed = true
-          
-          schedulePostJoinFlow()
+
+          if (text.includes('отслеживается') || text.includes('проверка завершена')) {
+            beginSubserverJoin()
+            addLog('success', username, 'Зашёл на подсервер')
+            schedulePostJoinFlow()
+          } else {
+            addLog('success', username, 'LimboFilter пройден, жду перевод сервера')
+          }
         }
       } catch (e) {
         diagEvent('server-message-handler-error', { error: e })
@@ -4947,7 +5294,8 @@ function createBot(cfg) {
 
     bot.on('kicked', reason => {
       diagEvent('bot-kicked-event', { reason })
-      const wasInLimboCheck = waitingForFall && !joinedSubserver && !fallCheckPassed
+      const wasInBotFilterCheck = isInBotFilterChallenge()
+      const hadLimboSuccess = limboSuccessSeen
       isOnline = false
       positionConfirmed = false
       resetSessionState()
@@ -4969,75 +5317,34 @@ function createBot(cfg) {
       
       updateBotStatus(username, 'оффлайн')
       cleanupTimers()
-      
-      const low = r.toLowerCase()
-      if (wasInLimboCheck && (
-        low.includes('время ожидания истекло') ||
-        low.includes('timed out') ||
-        low.includes('timeout')
-      )) {
-        addLog('warning', username, 'LimboFilter таймаут -> быстрый перезаход')
-        backoff = 5000 + Math.floor(Math.random() * 3000)
-        scheduleReconnectLocal(backoff, true, 'kick-limbo-timeout')
-        return
-      }
 
-      if (isTooManyPacketsText(low)) {
-        activatePacketSafetyMode('kick-too-many-packets')
-        backoff = 15000 + Math.floor(Math.random() * 15000)
-        scheduleReconnectLocal(backoff, true, 'kick-too-many-packets')
-        return
-      }
-
-      if (low.includes('internal error') || low.includes('connection')) {
-        activateStabilityCooldown('кик/internal connection error', CONNECTION_STABILITY_COOLDOWN_MS)
-        backoff = 30000 + Math.floor(Math.random() * 30000)
-        scheduleReconnectLocal(backoff, true, 'kick-internal-connection')
-        return
-      }
-
-      // Р С™Р В°Р В¶Р Т‘РЎвЂ№Р в„– Р С—Р С•Р Р†РЎвЂљР С•РЎР‚ РЎС“Р Р†Р ВµР В»Р С‘РЎвЂЎР С‘Р Р†Р В°Р ВµРЎвЂљ Р В·Р В°Р Т‘Р ВµРЎР‚Р В¶Р С”РЎС“ Р Р…Р В° 5 Р СР С‘Р Р…РЎС“РЎвЂљ, Р СР В°Р С”РЎРѓ 30 Р СР С‘Р Р…РЎС“РЎвЂљ
-      if (low.includes('подождите') || low.includes('wait') || low.includes('перед повторным')) {
-        waitKickCount++
-        const baseDelay = Math.min(600000 + (waitKickCount - 1) * 300000, 1800000) // 10Р СР С‘Р Р… + 5Р СР С‘Р Р… * N, Р СР В°Р С”РЎРѓ 30Р СР С‘Р Р…
-        const jitter = Math.floor(Math.random() * 60000)
-        backoff = baseDelay + jitter
-        addLog('warning', username, `! Подождите (попытка ${waitKickCount}) - ждём ${Math.round(backoff/60000)} РјРёРЅ`)
-        scheduleReconnectLocal(backoff, true, 'kick-wait-before-retry')
+      if (hadLimboSuccess || isLimboSuccessText(r)) {
+        addLog('success', username, 'LimboFilter пройден, перезахожу после success-kick')
+        scheduleReconnectLocal(1200, true, 'limbo-success-kick')
         return
       }
       
-      if (low.includes('antibot') || low.includes('антибот')) {
-        if (low.includes('превысили') || low.includes('превышение')) {
-          addLog('error', username, 'ERR LimboFilter НЕ ПРОЙДЕН')
-          backoff = 15000 + Math.floor(Math.random() * 15000)
-        } else {
-          backoff = 8000 + Math.floor(Math.random() * 12000)
-        }
-        scheduleReconnectLocal(backoff, true, 'kick-antibot')
-        return
-      }
-      
-      if (low.includes('you are logging in too fast') || low.includes('logging too')) {
-        addLog('warning', username, '! Слишком быстрый вход - ждём 1-2 минуты')
-        backoff = 60000 + Math.floor(Math.random() * 60000)
-        scheduleReconnectLocal(backoff, true, 'kick-logging-too-fast')
-        return
-      }
-      if (low.includes('already connected')) {
-        backoff = 45000 + Math.floor(Math.random() * 45000)
-        addLog('warning', username, `Already connected - ждём ${Math.round(backoff/1000)}с`)
-        scheduleReconnectLocal(backoff, true, 'kick-already-connected')
-        return
-      }
-      
-      backoff = 10000 + Math.floor(Math.random() * 10000)
-      scheduleReconnectLocal(backoff, true, 'kick-generic')
+      applyReconnectDecision(
+        getReconnectDecision(
+          {
+            type: 'kick',
+            reason: r,
+            wasInBotFilterCheck
+          },
+          {
+            random: Math.random,
+            waitKickCount,
+            connectionStabilityCooldownMs: CONNECTION_STABILITY_COOLDOWN_MS
+          }
+        ),
+        'kick'
+      )
     })
 
     bot.on('end', reason => {
       diagEvent('bot-end-event', { reason })
-      const wasInLimboCheck = waitingForFall && !joinedSubserver && !fallCheckPassed
+      const wasInBotFilterCheck = isInBotFilterChallenge()
+      const hadLimboSuccess = limboSuccessSeen
       isOnline = false
       positionConfirmed = false
       resetSessionState()
@@ -5046,26 +5353,48 @@ function createBot(cfg) {
         updateBotStatus(username, 'оффлайн')
         cleanupTimers()
 
-        if (wasInLimboCheck) {
-          addLog('warning', username, 'LimboFilter закрыл socket -> быстрый перезаход')
-          backoff = 5000 + Math.floor(Math.random() * 3000)
-          scheduleReconnectLocal(backoff, true, 'end-limbo-socket-closed')
+        if (hadLimboSuccess) {
+          addLog('success', username, 'LimboFilter пройден, socket закрыт штатно -> быстрый перезаход')
+          scheduleReconnectLocal(1200, true, 'limbo-success-end')
           return
         }
 
-        backoff = 8000 + Math.floor(Math.random() * 12000)
-        scheduleReconnectLocal(backoff, false, 'bot-end')
+        applyReconnectDecision(
+          getReconnectDecision(
+            {
+              type: 'end',
+              reason,
+              wasInBotFilterCheck
+            },
+            { random: Math.random }
+          ),
+          'end'
+        )
       }
     })
 
     bot.on('error', err => {
       const msg = String(err && err.message ? err.message : err)
       diagEvent('bot-error-event', { error: err })
-      const wasInLimboCheck = waitingForFall && !joinedSubserver && !fallCheckPassed
-      if (hasReconnectPendingLocal()) {
-        if (msg.includes('ECONNRESET') || msg.includes('ECONNABORTED')) {
-          activateStabilityCooldown('сетевой сброс во время reconnect', CONNECTION_STABILITY_COOLDOWN_MS)
+      const wasInBotFilterCheck = isInBotFilterChallenge()
+      const decision = getReconnectDecision(
+        {
+          type: 'error',
+          message: msg,
+          error: err,
+          wasInBotFilterCheck,
+          hasReconnectPending: hasReconnectPendingLocal()
+        },
+        {
+          random: Math.random,
+          clientTimeoutReconnectMs: CLIENT_TIMEOUT_RECONNECT_MS,
+          clientTimeoutReconnectJitterMs: CLIENT_TIMEOUT_RECONNECT_JITTER_MS,
+          connectionStabilityCooldownMs: CONNECTION_STABILITY_COOLDOWN_MS
         }
+      )
+
+      if (decision.action === 'ignore' || decision.action === 'stability-only') {
+        applyReconnectDecision(decision, 'error')
         return
       }
 
@@ -5073,61 +5402,10 @@ function createBot(cfg) {
       positionConfirmed = false
       resetSessionState()
       
-      if (msg.includes('Ignoring block entities')) return
-      if (msg.includes('chunk failed to load')) return
-      if (msg.includes('entity.objectType')) return
-      if (msg.includes('deprecated')) return
-      
       addLog('error', username, msg.substring(0, 60))
       cleanupTimers()
       updateBotStatus(username, 'оффлайн')
-
-      if (wasInLimboCheck && (msg.includes('ECONNRESET') || msg.includes('ECONNABORTED'))) {
-        addLog('warning', username, 'LimboFilter оборвал соединение -> быстрый перезаход')
-        backoff = 5000 + Math.floor(Math.random() * 3000)
-        scheduleReconnectLocal(backoff, true, 'error-limbo-reset')
-        return
-      }
-      
-      if (msg.includes('connect ETIMEDOUT') || err.syscall === 'connect') {
-        backoff = 15000 + Math.floor(Math.random() * 15000)
-        scheduleReconnectLocal(backoff, true, 'error-connect-timeout')
-        return
-      }
-      
-      if (msg.includes('client timed out after')) {
-        addLog('warning', username, '! Клиент таймаут')
-        backoff = CLIENT_TIMEOUT_RECONNECT_MS + Math.floor(Math.random() * CLIENT_TIMEOUT_RECONNECT_JITTER_MS)
-        scheduleReconnectLocal(backoff, true, 'error-client-timeout')
-        return
-      }
-      
-      if (msg.toLowerCase().includes('you are logging in too fast') || msg.toLowerCase().includes('logging too')) {
-        backoff = 60000 + Math.floor(Math.random() * 60000)
-        scheduleReconnectLocal(backoff, true, 'error-logging-too-fast')
-        return
-      }
-      
-      const isNetworkError = ['ECONNRESET','ECONNABORTED','ENOTFOUND','ETIMEDOUT','EAI_AGAIN','EHOSTUNREACH']
-        .some(c => (err.code||'').includes(c)) || msg.includes('socket hang up')
-      
-      if (isNetworkError) {
-        const isConnectionIssue = (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN' || err.code === 'EHOSTUNREACH')
-        
-        if (isConnectionIssue) {
-          backoff = 20000 + Math.floor(Math.random() * 20000)
-          noteNoInternetError()
-        } else {
-          activateStabilityCooldown(`сетевой сброс ${err.code || 'socket'}`, CONNECTION_STABILITY_COOLDOWN_MS)
-          backoff = 20000 + Math.floor(Math.random() * 20000)
-        }
-        
-        scheduleReconnectLocal(backoff, true, `error-network-${err.code || 'socket'}`)
-        return
-      }
-      
-      backoff = 15000 + Math.floor(Math.random() * 15000)
-      scheduleReconnectLocal(backoff, true, 'error-generic')
+      applyReconnectDecision(decision, 'error')
     })
   }
 
@@ -5192,6 +5470,7 @@ function createBot(cfg) {
       await ensureMiningLookAt(true)
 
       addLog('success', username, `Запускаю новый движок добычи (${miningTargets.length} точек, пачка ${MINING_BATCH_SIZE})`)
+      setLifecycleState('mining', 'mining-loop-started')
       startSpeedGuard(expectedSessionEpoch)
       diagEvent('mining-loop-started', {
         targets: miningTargets.length,
@@ -5370,6 +5649,8 @@ function createBot(cfg) {
     get bot() { return bot },
     get isOnline() { return isOnline },
     get hasReconnectPending() { return hasReconnectPendingLocal() },
+    get isBotFilterBusy() { return isBotFilterBusy() },
+    getLifecycleSnapshot,
     get reconnectDueAt() { return reconnectDueAt },
     set isRotating(val) { isRotating = val },
     cleanup: () => {
@@ -5413,7 +5694,6 @@ function startAllBots() {
 }
 
 // ============================================================================
-// Р вЂњР С›Р В Р Р‡Р В§Р ВР вЂў Р С™Р вЂєР С’Р вЂ™Р ВР РЃР В
 // ============================================================================
 if (screen) {
   screen.key(['escape', 'q', 'C-c'], () => {
@@ -5435,10 +5715,9 @@ if (screen) {
 }
 
 // ============================================================================
-// Р вЂ”Р С’Р СџР Р€Р РЋР С™
 // ============================================================================
 addLog('info', 'SYSTEM', ' Менеджер ботов запущен')
-addLog('info', 'SYSTEM', `Сервер: ${SERVER_HOST} (${MC_VERSION})`)
+addLog('info', 'SYSTEM', `Сервер: ${SERVER_HOST}:${SERVER_PORT} (${MC_VERSION})`)
 addLog('info', 'SYSTEM', `Config: ${CONFIG_FILE_PATH}`)
 addLog('info', 'SYSTEM', `Log file: ${LOG_FILE_PATH}`)
 addLog('info', 'SYSTEM', `Режим отладки: ${DEBUG_MODE ? 'ВКЛ' : 'ВЫКЛ'} | [DIAG]: ${DETAILED_EVENT_LOGGING ? 'ВКЛ' : 'ВЫКЛ'} | server messages: ${LOG_SERVER_MESSAGES ? 'ВКЛ' : 'ВЫКЛ'}`)

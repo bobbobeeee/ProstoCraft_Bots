@@ -2,6 +2,7 @@
   const DEFAULT_CONFIG = {
     server: {
       host: 'mc.prostocraft.com',
+      port: 25565,
       version: '1.16.5',
       password: ''
     },
@@ -33,9 +34,9 @@
       breakPacketMaxPerSecond: 300,
       breakPacketBurstWindowMs: 250,
       breakPacketBurstLimit: 84,
-      breakPacketSafeMaxPerSecond: 150,
-      breakPacketSafeBurstLimit: 40,
-      breakPacketSafeModeMs: 900000,
+      breakPacketSafeMaxPerSecond: 240,
+      breakPacketSafeBurstLimit: 68,
+      breakPacketSafeModeMs: 120000,
       breakPacketSafeRepeats: 1,
       loginCommandCooldownMs: 7000,
       reactiveBreakRepeats: 1,
@@ -75,17 +76,15 @@
       startStaggerJitter: 500,
       periodicRejoinMs: 3600000,
       rotationDelayBetweenBots: 120000,
-      minBlocksPerMin: 350,
       speedGuardIntervalMs: 5000,
-      speedGuardStartGraceMs: 45000,
-      speedGuardLowRateMs: 25000,
-      speedGuardRecoveryCooldownMs: 15000,
-      speedGuardTargetRatio: 0.82,
-      speedGuardMinBlocksPerMin: 350,
-      speedGuardMinLearnRate: 450,
+      speedGuardStartGraceMs: 20000,
+      speedGuardLowRateMs: 10000,
+      speedGuardRecoveryCooldownMs: 5000,
+      speedGuardTargetRatio: 0.9,
+      speedGuardRateWindowMs: 30000,
       speedGuardButtonIdleMs: 12000,
-      speedGuardNoProgressReconnectMs: 35000,
-      speedGuardReconnectAfterRecoveries: 3,
+      speedGuardNoProgressReconnectMs: 20000,
+      speedGuardReconnectAfterRecoveries: 2,
       stuckRecoveryMs: 60000
     },
     antibot: {
@@ -99,7 +98,11 @@
       limboDetectionTimeoutMs: 4500,
       limboCompletionGraceMs: 900,
       limboPostFallJoinMs: 900,
-      limboMenuWaitMs: 12000
+      limboMenuWaitMs: 12000,
+      scannerPassiveWaitMs: 60000,
+      scannerRecentPositionMs: 5000,
+      scannerPositionWaitMs: 2500,
+      limboServerTimeoutMs: 15000
     },
     menu: {
       slot1: 10,
@@ -134,7 +137,12 @@
       cleanupIntervalMs: 3600000,
       softRestartMaxPerHour: 2,
       offlineWatchdogMs: 90000,
-      offlineWatchdogIntervalMs: 30000
+      offlineWatchdogIntervalMs: 30000,
+      botFilterRetryBaseMs: 8000,
+      botFilterRetryMaxMs: 120000,
+      botFilterFallAttemptsBeforeHold: 2,
+      botFilterFallHoldMs: 1800000,
+      chatCaptchaReconnectMs: 1800000
     },
     metrics: {
       port: 3000
@@ -224,6 +232,7 @@
       chatLogs: [],
       configPath: '-',
       logPath: '-',
+      chatLogPath: '-',
       runtimeDir: '-'
     }
   }

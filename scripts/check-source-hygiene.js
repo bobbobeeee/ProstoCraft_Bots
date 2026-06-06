@@ -4,8 +4,18 @@ const vm = require('vm')
 
 const SOURCE_FILES = [
   'bot.js',
+  'bot-filter.js',
+  'limbo-filter.js',
+  'reconnect-policy.js',
+  'speed-guard.js',
+  'config-migrations.js',
   'monitoring.js',
   'monitoring.test.js',
+  'bot-filter.test.js',
+  'limbo-filter.test.js',
+  'reconnect-policy.test.js',
+  'speed-guard.test.js',
+  'config-migrations.test.js',
   'desktop/main.js',
   'desktop/preload.js',
   'desktop/renderer/app.js',
@@ -13,6 +23,7 @@ const SOURCE_FILES = [
   'scripts/sync-android-assets.js',
   'scripts/sync-cordova-app.js',
   'scripts/build-cordova-android-release.js',
+  'scripts/run-local-bot-test.js',
   'mobile-cordova-src/nodejs-project/mobile-runtime.js'
 ]
 
@@ -26,6 +37,10 @@ const SYNCED_FILE_PAIRS = [
   ['desktop/renderer/styles.css', 'android/app/src/main/assets/www/styles.css'],
   ['desktop/renderer/index.html', 'android/app/src/main/assets/www/index.html'],
   ['bot.js', 'mobile-cordova/www/nodejs-project/bot.js'],
+  ['bot-filter.js', 'mobile-cordova/www/nodejs-project/bot-filter.js'],
+  ['limbo-filter.js', 'mobile-cordova/www/nodejs-project/limbo-filter.js'],
+  ['reconnect-policy.js', 'mobile-cordova/www/nodejs-project/reconnect-policy.js'],
+  ['speed-guard.js', 'mobile-cordova/www/nodejs-project/speed-guard.js'],
   ['monitoring.js', 'mobile-cordova/www/nodejs-project/monitoring.js'],
   ['config.json', 'mobile-cordova/www/nodejs-project/config.json'],
   ['config.json', 'android/app/src/main/assets/default-config.json']
@@ -72,6 +87,75 @@ function checkDuplicateFunctionDeclarations() {
 
   if (failures.length) {
     fail(`Duplicate function declarations found:\n${failures.join('\n')}`)
+  }
+}
+
+function checkDuplicateJsonKeys(filePath) {
+  const text = readText(filePath)
+  const duplicates = []
+  const stack = []
+  let index = 0
+
+  function skipWhitespace() {
+    while (/\s/.test(text[index] || '')) index += 1
+  }
+
+  function parseString() {
+    const start = index
+    index += 1
+
+    while (index < text.length) {
+      const char = text[index]
+      if (char === '\\') {
+        index += 2
+        continue
+      }
+      if (char === '"') {
+        index += 1
+        return text.slice(start, index)
+      }
+      index += 1
+    }
+
+    return text.slice(start)
+  }
+
+  while (index < text.length) {
+    const char = text[index]
+
+    if (char === '"') {
+      const rawString = parseString()
+      skipWhitespace()
+
+      if (text[index] === ':' && stack.length > 0) {
+        const currentObject = stack[stack.length - 1]
+        let key
+        try {
+          key = JSON.parse(rawString)
+        } catch (error) {
+          key = rawString
+        }
+
+        if (currentObject.keys.has(key)) {
+          duplicates.push(`${filePath}: duplicate JSON key "${key}" near line ${lineOf(text, index)}`)
+        } else {
+          currentObject.keys.add(key)
+        }
+      }
+      continue
+    }
+
+    if (char === '{') {
+      stack.push({ keys: new Set() })
+    } else if (char === '}') {
+      stack.pop()
+    }
+
+    index += 1
+  }
+
+  if (duplicates.length) {
+    fail(`Duplicate JSON keys found:\n${duplicates.join('\n')}`)
   }
 }
 
@@ -143,6 +227,7 @@ function checkSyncedGeneratedAssets() {
 }
 
 async function main() {
+  checkDuplicateJsonKeys('config.json')
   checkDuplicateFunctionDeclarations()
   await checkBridgeDefaultConfig()
   checkSyncedGeneratedAssets()

@@ -6,6 +6,7 @@ const DATA_DIR = cordova.app.datadir()
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json')
 const SETTINGS_PATH = path.join(DATA_DIR, 'desktop-settings.json')
 const LOG_PATH = path.join(DATA_DIR, 'bot.log')
+const CHAT_LOG_PATH = path.join(DATA_DIR, 'chat.log')
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.json')
 const BOT_ENTRY_PATH = path.join(__dirname, 'bot.js')
 const MONITORING_PATH = path.join(__dirname, 'monitoring.js')
@@ -99,6 +100,7 @@ function createEmptyRuntime() {
     chatLogs: [],
     configPath: CONFIG_PATH,
     logPath: LOG_PATH,
+    chatLogPath: CHAT_LOG_PATH,
     runtimeDir: DATA_DIR
   }
 }
@@ -263,6 +265,7 @@ function respond(requestId, payload = null, error = null) {
 function prepareBotEnvironment() {
   process.env.BOT_CONFIG_PATH = CONFIG_PATH
   process.env.BOT_LOG_PATH = LOG_PATH
+  process.env.BOT_CHAT_LOG_PATH = CHAT_LOG_PATH
   process.env.BOT_AUTOSTART = '0'
   process.env.BOT_GUI_MODE = '0'
   process.env.BOT_MOBILE_RUNTIME = '1'
@@ -315,6 +318,7 @@ function restartRuntimeFromWatchdog(reason = 'runtime-watchdog') {
     runtimeState.status = 'running'
     runtimeState.configPath = CONFIG_PATH
     runtimeState.logPath = LOG_PATH
+    runtimeState.chatLogPath = CHAT_LOG_PATH
     runtimeState.runtimeDir = DATA_DIR
     lastRuntimeEventAt = Date.now()
     syncRuntimeKeepAlive()
@@ -439,6 +443,7 @@ function handleRequest(request) {
         runtimeState.status = 'running'
         runtimeState.configPath = CONFIG_PATH
         runtimeState.logPath = LOG_PATH
+        runtimeState.chatLogPath = CHAT_LOG_PATH
         runtimeState.runtimeDir = DATA_DIR
         syncRuntimeKeepAlive()
         publishRuntimeState(true)

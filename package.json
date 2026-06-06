@@ -1,21 +1,21 @@
 {
   "name": "autominerv2",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "description": "Desktop launcher and config studio for ProstoCraft mining bots",
   "main": "desktop/main.js",
   "scripts": {
     "start": "electron .",
     "start:cli": "node bot.js",
     "start:headless": "node bot.js --headless",
+    "test:local-bot": "node scripts/run-local-bot-test.js",
     "android:sync": "node scripts/sync-android-assets.js",
     "cordova:sync": "node scripts/sync-cordova-app.js",
     "android:build:release": "node scripts/build-cordova-android-release.js",
-    "check": "node --check bot.js && node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/renderer/bridge.js && node --check desktop/renderer/app.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/check-source-hygiene.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && node scripts/check-source-hygiene.js",
-    "dist:win": "electron-builder --win nsis portable",
+    "check": "node --check bot.js && node --check bot-filter.js && node --check limbo-filter.js && node --check reconnect-policy.js && node --check speed-guard.js && node --check config-migrations.js && node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/renderer/bridge.js && node --check desktop/renderer/app.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/check-source-hygiene.js && node --check scripts/run-local-bot-test.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && node scripts/check-source-hygiene.js",
+    "dist:win": "electron-builder --win nsis",
     "dist:win:installer": "electron-builder --win nsis",
-    "dist:win:portable": "electron-builder --win portable",
-    "dist:win:release": "electron-builder --win nsis portable --publish never",
-    "test": "node monitoring.test.js && npm run check"
+    "dist:win:release": "electron-builder --win nsis --publish never",
+    "test": "node monitoring.test.js && node bot-filter.test.js && node limbo-filter.test.js && node reconnect-policy.test.js && node speed-guard.test.js && node config-migrations.test.js && npm run check"
   },
   "repository": {
     "type": "git",
@@ -108,8 +108,7 @@
       "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
     "nsis": {
@@ -118,9 +117,6 @@
       "uninstallerIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "portable": {
-      "artifactName": "ProstoCraft.Bot.Studio-Portable-${version}.${ext}"
     }
   }
 }

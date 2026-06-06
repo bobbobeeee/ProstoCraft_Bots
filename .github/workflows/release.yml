@@ -1,4 +1,4 @@
-name: Build Windows Release
+name: Build Release
 
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    name: Windows installer and portable
+  release:
+    name: Windows installer and Android APK
     runs-on: windows-2022
 
     steps:
@@ -24,8 +24,22 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Cordova dependencies
+        working-directory: mobile-cordova
+        run: npm ci
+
+      - name: Prepare Cordova Android platform
+        working-directory: mobile-cordova
+        run: npx cordova platform add android@13.0.0
 
       - name: Sync generated app copies
         shell: pwsh
@@ -36,26 +50,31 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build Windows files
-        run: npm run dist:win:release
+      - name: Build Windows installer
+        run: npm run dist:win:installer
+
+      - name: Build Android APK
+        run: npm run android:build:release
 
       - name: Generate checksums
         shell: pwsh
         run: |
-          $files = Get-ChildItem -Path dist -Filter *.exe | Sort-Object Name
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item -LiteralPath dist/ProstoCraft.Bot.Studio-Setup-*.exe -Destination release-assets/
+          Copy-Item -LiteralPath dist-android/*.apk -Destination release-assets/
+          $files = Get-ChildItem -Path release-assets -File | Sort-Object Name
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
             "$hash  $($file.Name)"
           }
-          $lines | Set-Content -Path dist/SHA256SUMS.txt -Encoding ascii
+          $lines | Set-Content -Path release-assets/SHA256SUMS.txt -Encoding ascii
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ProstoCraft-Bot-Studio-Windows
+          name: ProstoCraft-Bot-Studio-Release
           path: |
-            dist/*.exe
-            dist/SHA256SUMS.txt
+            release-assets/*
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -63,5 +82,4 @@ jobs:
         with:
           body_path: RELEASE_NOTES.md
           files: |
-            dist/*.exe
-            dist/SHA256SUMS.txt
+            release-assets/*

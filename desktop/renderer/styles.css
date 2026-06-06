@@ -37,6 +37,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   width: 100%;
@@ -2126,26 +2130,26 @@ body[data-platform="android"] {
 .button,
 .icon-button {
   color: var(--text-dark);
-  background: #182333;
+  background: transparent;
   border-color: var(--line);
 }
 
 .button:hover,
 .icon-button:hover {
   border-color: rgba(76, 141, 255, 0.58);
-  background: #1d2b3d;
+  background: rgba(76, 141, 255, 0.08);
 }
 
 .button--primary,
 .mobile-action-bar .button--primary {
-  color: #ffffff;
-  background: #2f74df;
-  border-color: #2f74df;
+  color: #8fbaff;
+  background: transparent;
+  border-color: rgba(76, 141, 255, 0.72);
 }
 
 .button--secondary {
   color: var(--text-dark);
-  background: #202d40;
+  background: transparent;
   border-color: rgba(188, 205, 226, 0.18);
 }
 
@@ -2157,9 +2161,9 @@ body[data-platform="android"] {
 
 .button--danger,
 .mobile-action-bar .button--danger {
-  color: #ffffff;
-  background: var(--danger);
-  border-color: var(--danger);
+  color: #ff9aa9;
+  background: transparent;
+  border-color: rgba(255, 90, 117, 0.72);
 }
 
 .chip,
@@ -2259,7 +2263,7 @@ body[data-platform="android"] {
 
 .mobile-action-bar .button {
   color: var(--text-dark);
-  background: #111a26;
+  background: transparent;
   border-color: var(--line);
 }
 
@@ -2428,5 +2432,433 @@ body[data-platform="android"] {
 
   body[data-platform="android"] .toast-stack {
     bottom: calc(120px + var(--safe-bottom));
+  }
+}
+
+.button,
+.icon-button,
+.mobile-action-bar .button,
+body[data-platform="android"] .mobile-action-bar .button,
+body[data-platform="android"] .coordinates-toolbar--compact .button {
+  background: transparent;
+}
+
+.button--primary,
+.mobile-action-bar .button--primary {
+  color: #8fbaff;
+  background: transparent;
+  border-color: rgba(76, 141, 255, 0.72);
+}
+
+.button--danger,
+.mobile-action-bar .button--danger {
+  color: #ff9aa9;
+  background: transparent;
+  border-color: rgba(255, 90, 117, 0.72);
+}
+
+.button:hover,
+.icon-button:hover,
+.mobile-action-bar .button:hover {
+  background: rgba(76, 141, 255, 0.08);
+}
+
+@media (max-width: 520px) {
+  body[data-platform="android"] .workspace--bots #bots-panel {
+    padding: 8px;
+  }
+
+  body[data-platform="android"] .workspace--bots #bots-panel > .panel-header {
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+
+  body[data-platform="android"] .workspace--bots #bots-panel > .panel-header .eyebrow {
+    display: none;
+  }
+
+  body[data-platform="android"] .workspace--bots #bots-panel > .panel-header h3 {
+    font-size: 18px;
+    line-height: 1.12;
+  }
+
+  body[data-platform="android"] .workspace--bots #bots-panel .inline-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .workspace--bots #bots-panel .inline-actions .button {
+    min-height: 34px;
+    padding: 5px 4px;
+    font-size: 10.5px;
+    line-height: 1.05;
+  }
+
+  body[data-platform="android"] .bot-editor-layout,
+  body[data-platform="android"] .bot-editor,
+  body[data-platform="android"] .bot-editor-sections {
+    gap: 8px;
+  }
+
+  body[data-platform="android"] .bot-list {
+    gap: 6px;
+    padding: 0;
+  }
+
+  body[data-platform="android"] .bot-list__header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--radius-md);
+  }
+
+  body[data-platform="android"] .bot-list__header .eyebrow,
+  body[data-platform="android"] .bot-list__summary {
+    display: none;
+  }
+
+  body[data-platform="android"] .bot-list__header h4 {
+    font-size: 14px;
+    line-height: 1.1;
+  }
+
+  body[data-platform="android"] .bot-list__header .chip {
+    width: auto;
+    min-height: 24px;
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+
+  body[data-platform="android"] .bot-card {
+    min-height: 0;
+    gap: 5px;
+    padding: 8px;
+    border-radius: var(--radius-md);
+  }
+
+  body[data-platform="android"] .bot-card__top {
+    grid-template-columns: 24px minmax(0, 1fr) 10px;
+    gap: 7px;
+  }
+
+  body[data-platform="android"] .bot-card__index {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+  }
+
+  body[data-platform="android"] .bot-card__identity strong {
+    font-size: 13px;
+  }
+
+  body[data-platform="android"] .bot-card__identity span,
+  body[data-platform="android"] .bot-card__line {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  body[data-platform="android"] .bot-card__status,
+  body[data-platform="android"] .bot-card__metrics {
+    display: none;
+  }
+
+  body[data-platform="android"] .bot-control-panel {
+    display: none;
+  }
+
+  body[data-platform="android"] .bot-control-panel .eyebrow,
+  body[data-platform="android"] .bot-editor-card .eyebrow {
+    display: none;
+  }
+
+  body[data-platform="android"] .bot-control-panel__main {
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .bot-control-panel__main h3 {
+    font-size: 17px;
+    line-height: 1.12;
+  }
+
+  body[data-platform="android"] .bot-control-panel__meta {
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .bot-control-panel__meta span {
+    width: auto;
+    min-height: 24px;
+    padding: 3px 6px;
+    font-size: 10.5px;
+  }
+
+  body[data-platform="android"] .bot-live-grid {
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .bot-stat {
+    gap: 2px;
+    min-height: 0;
+    padding: 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  body[data-platform="android"] .bot-stat span {
+    font-size: 10px;
+  }
+
+  body[data-platform="android"] .bot-stat strong {
+    font-size: 12px;
+  }
+
+  body[data-platform="android"] .bot-editor-card {
+    gap: 8px;
+    padding: 9px;
+    border-radius: var(--radius-md);
+  }
+
+  body[data-platform="android"] .bot-card-section {
+    gap: 7px;
+    padding-bottom: 8px;
+  }
+
+  body[data-platform="android"] .bot-card-section .panel-header h4 {
+    font-size: 14px;
+  }
+
+  body[data-platform="android"] .field {
+    gap: 4px;
+  }
+
+  body[data-platform="android"] .field-label {
+    font-size: 11px;
+  }
+
+  body[data-platform="android"] .field input,
+  body[data-platform="android"] .field textarea {
+    min-height: 36px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+
+  body[data-platform="android"] .coordinate-grid {
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .coordinate-bulk-editor--primary .coordinate-textarea--inline {
+    min-height: 170px;
+    max-height: 26dvh;
+  }
+
+  body[data-platform="android"] .coordinates-toolbar--compact {
+    gap: 5px;
+  }
+
+  body[data-platform="android"] .coordinates-toolbar--compact .button {
+    min-height: 34px;
+    padding: 5px 4px;
+    font-size: 10.5px;
+  }
+
+  body[data-platform="android"] .settings-jump-bar {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  body[data-platform="android"] .mini-status-card,
+  body[data-platform="android"] .mini-summary-card,
+  body[data-platform="android"] .mobile-bot-pill,
+  body[data-platform="android"] .summary-card,
+  body[data-platform="android"] .path-card,
+  body[data-platform="android"] .bot-card,
+  body[data-platform="android"] .bot-stat {
+    gap: 4px;
+    padding: 7px;
+    border-radius: var(--radius-sm);
+  }
+
+  body[data-platform="android"] .mini-status-card__copy,
+  body[data-platform="android"] .mini-status-card__meta,
+  body[data-platform="android"] .mini-summary-card span,
+  body[data-platform="android"] .mobile-bot-pill span,
+  body[data-platform="android"] .summary-note,
+  body[data-platform="android"] .summary-label,
+  body[data-platform="android"] .path-card span,
+  body[data-platform="android"] .bot-card__identity span,
+  body[data-platform="android"] .bot-card__line,
+  body[data-platform="android"] .bot-stat span {
+    font-size: 10.5px;
+    line-height: 1.18;
+  }
+
+  body[data-platform="android"] .mini-summary-card strong,
+  body[data-platform="android"] .mobile-bot-pill strong,
+  body[data-platform="android"] .summary-value,
+  body[data-platform="android"] .path-card code {
+    font-size: 13px;
+    line-height: 1.12;
+  }
+
+  body[data-platform="android"] .field,
+  body[data-platform="android"] .field-checkbox-copy {
+    gap: 7px;
+  }
+
+  body[data-platform="android"] .field-label {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  body[data-platform="android"] .settings-subsection > .panel-header .muted-copy,
+  body[data-platform="android"] .bot-card-section > .panel-header .muted-copy,
+  body[data-platform="android"] .field-checkbox-copy .muted-copy {
+    font-size: 13px;
+    line-height: 1.38;
+  }
+
+  body[data-platform="android"] .help-badge {
+    width: 26px;
+    height: 26px;
+    font-size: 13px;
+  }
+
+  body[data-platform="android"] .help-popover {
+    width: min(340px, calc(100vw - 28px));
+    padding: 13px 14px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  body[data-platform="android"] .field input,
+  body[data-platform="android"] .field textarea,
+  body[data-platform="android"] .coordinate-textarea {
+    min-height: 46px;
+    padding: 10px 11px;
+    font-size: 15px;
+    line-height: 1.32;
+  }
+
+  body[data-platform="android"] .field input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+    min-height: 24px;
+  }
+
+  body[data-platform="android"] .coordinate-bulk-editor--primary .coordinate-textarea--inline {
+    min-height: 210px;
+    font-size: 15px;
+    line-height: 1.42;
+  }
+
+  body[data-platform="android"] .coordinate-textarea::placeholder,
+  body[data-platform="android"] .field input::placeholder,
+  body[data-platform="android"] .field textarea::placeholder {
+    font-size: 14px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard {
+    gap: 8px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard #mobile-overview {
+    position: static;
+    inset: auto;
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    transform: none;
+  }
+
+  body[data-platform="android"] .workspace--dashboard #dashboard-panel {
+    display: none;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card {
+    display: grid;
+    gap: 7px;
+    padding: 9px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card .eyebrow {
+    display: none;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card__top {
+    gap: 6px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card__top strong {
+    font-size: 16px;
+    line-height: 1.15;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card__meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    font-size: 10.5px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card__meta span {
+    min-width: 0;
+    padding: 4px 5px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.03);
+    text-align: center;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-status-card__copy {
+    display: none;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-status-actions {
+    display: none;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-summary-card {
+    min-height: 66px;
+    padding: 8px 6px;
+    text-align: center;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-summary-card strong {
+    font-size: 14px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mini-summary-card span {
+    font-size: 10px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-bot-strip {
+    gap: 6px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-bot-pill {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 46px;
+    padding: 8px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-bot-pill strong {
+    font-size: 13px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-bot-pill span:first-of-type {
+    justify-self: end;
+    font-size: 10px;
+  }
+
+  body[data-platform="android"] .workspace--dashboard .mobile-bot-pill span:last-of-type {
+    grid-column: 1 / -1;
   }
 }

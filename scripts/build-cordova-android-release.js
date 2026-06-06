@@ -13,7 +13,8 @@ const gradleWrapper = path.join(
 const gradleUserHome = path.join(projectRoot, '.gradle-home')
 const defaultAndroidSdkRoot = path.join(projectRoot, 'tools', 'android-sdk')
 const defaultOutputDir = path.join(projectRoot, 'dist-android')
-const defaultOutputApk = path.join(defaultOutputDir, 'ProstoCraft Bot Studio Mobile-runtime.apk')
+const appVersion = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version || '0.0.0'
+const defaultOutputApk = path.join(defaultOutputDir, `ProstoCraft.Bot.Studio-Mobile-${appVersion}.apk`)
 const releaseKeystore = path.join(projectRoot, 'android-signing', 'prostocraft-release.keystore')
 const cordovaBuildJson = path.join(cordovaRoot, 'build.json')
 const releaseSigningProperties = path.join(gradleProjectRoot, 'release-signing.properties')
@@ -224,7 +225,7 @@ function ensureCordovaAndroidResources() {
     fs.existsSync(cordovaConfigXml)
       ? ensureNodeJsFeature(fs.readFileSync(cordovaConfigXml, 'utf8'))
       : `<?xml version="1.0" encoding="utf-8"?>
-<widget id="com.prostocraft.botstudio.mobile" version="1.0.0" xmlns="http://www.w3.org/ns/widgets">
+<widget id="com.prostocraft.botstudio.mobile" version="${appVersion}" xmlns="http://www.w3.org/ns/widgets">
   <name>ProstoCraft Bot Studio Mobile</name>
   <content src="index.html" />
   <feature name="NodeJS">

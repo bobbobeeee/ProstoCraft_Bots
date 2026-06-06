@@ -12,8 +12,8 @@ https://github.com/merrobocop/ProstoCraft_Bots/releases
 
 Скачай один из файлов:
 
-- `ProstoCraft.Bot.Studio-Setup-1.0.3.exe` - если нужна обычная установка.
-- `ProstoCraft.Bot.Studio-Portable-1.0.3.exe` - если нужно запустить без установки.
+- `ProstoCraft.Bot.Studio-Setup-2.0.0.exe` - установщик для Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk` - APK для Android.
 
 ## Первый запуск
 

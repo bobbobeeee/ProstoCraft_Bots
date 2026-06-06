@@ -580,6 +580,7 @@ function createEmptyRuntime() {
     chatLogs: [],
     configPath: '-',
     logPath: '-',
+    chatLogPath: '-',
     runtimeDir: '-'
   }
 }
@@ -851,10 +852,12 @@ function createCompactSummaryCard(label, value, note) {
 }
 
 function getRuntimeUiState() {
+  const supportsDesktopFiles = state.platform === 'desktop'
+
   return {
     supportsRuntimeControl: state.capabilities.runtimeControl !== false,
-    supportsImport: state.capabilities.fileImport !== false,
-    supportsExport: state.capabilities.fileExport !== false,
+    supportsImport: supportsDesktopFiles && state.capabilities.fileImport !== false,
+    supportsExport: supportsDesktopFiles && state.capabilities.fileExport !== false,
     supportsRuntimeFolder: state.capabilities.openRuntimeDir !== false,
     isRunning: state.runtime.status === 'running' || state.runtime.status === 'starting',
     isBusy: state.runtime.status === 'starting' || state.runtime.status === 'stopping'
@@ -1186,6 +1189,7 @@ function cacheElements() {
   elements.chatLogCounter = document.getElementById('chat-log-counter')
   elements.configPathLabel = document.getElementById('config-path-label')
   elements.logPathLabel = document.getElementById('log-path-label')
+  elements.chatLogPathLabel = document.getElementById('chat-log-path-label')
   elements.runtimePathLabel = document.getElementById('runtime-path-label')
   elements.addBotButton = document.getElementById('add-bot-btn')
   elements.duplicateBotButton = document.getElementById('duplicate-bot-btn')
@@ -1651,6 +1655,7 @@ function renderChrome() {
   }
   if (elements.configPathLabel) elements.configPathLabel.textContent = state.runtime.configPath || '-'
   if (elements.logPathLabel) elements.logPathLabel.textContent = state.runtime.logPath || '-'
+  if (elements.chatLogPathLabel) elements.chatLogPathLabel.textContent = state.runtime.chatLogPath || '-'
   if (elements.runtimePathLabel) elements.runtimePathLabel.textContent = state.runtime.runtimeDir || '-'
   syncMobileStickyMetrics()
 }
@@ -2023,7 +2028,8 @@ function getVisibleSettingsSections() {
     }))
     .filter(section => section.fields.length > 0)
 
-  return [...baseSections, ...EXTRA_SETTINGS_SECTIONS]
+  const extraSections = state.platform === 'desktop' ? EXTRA_SETTINGS_SECTIONS : []
+  return [...baseSections, ...extraSections]
 }
 
 function renderSettingsV2() {
@@ -2037,41 +2043,17 @@ function renderSettingsV2() {
   const desktopSettingsCard = state.platform === 'desktop'
     ? `
       <article class="settings-card settings-card--section">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Application settings</p>
-            <h4>Поведение десктопного приложения</h4>
-          </div>
-        </div>
-        <p class="muted-copy">Настройки только для этой Windows-сборки: автозапуск, сворачивание в трей и поведение окна после старта.</p>
         <div class="settings-card-grid settings-card-grid--single">
           ${DESKTOP_SETTINGS_FIELDS_V2.map(field => renderSettingsField('desktop', field)).join('')}
         </div>
       </article>
     `
-    : `
-      <article class="settings-card settings-card--section">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Mobile shell</p>
-            <h4>Поведение Android-сборки</h4>
-          </div>
-        </div>
-        <p class="muted-copy">Эта APK-сборка хранит конфиг локально и адаптирует экран под разные размеры. Desktop-опции вроде трея и автозапуска Windows на Android не используются.</p>
-      </article>
-    `
+    : ''
 
   elements.settingsSections.innerHTML = `
     ${desktopSettingsCard}
 
     <article class="settings-card settings-card--section">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Bot settings</p>
-          <h4>Конфиг runtime и ботов</h4>
-        </div>
-      </div>
-      <p class="muted-copy">Здесь оставлены только базовые параметры. Остальные тонкие значения остаются в <code>config.json</code> и не показываются в обычном интерфейсе.</p>
       <div class="settings-jump-bar">
         ${sectionTargets.map(section => `
           <button class="settings-jump" type="button" data-settings-jump="${section.id}">
@@ -2787,7 +2769,6 @@ function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, 
       ${createCompactSummaryCard('Всего добыто', formatNumber(snapshot.totalBlocks || 0), `Аптайм ${formatDuration(snapshot.uptimeMs || 0)}`)}
       ${createCompactSummaryCard('Текущий темп', `${formatNumber(snapshot.currentRatePerMinute || 0, 1)} бл/мин`, `${formatNumber(snapshot.currentRatePerSecond || 0, 2)} бл/с`)}
       ${createCompactSummaryCard('Память', `${formatNumber(resources.memoryMb || 0, 1)} MB`, `CPU ${formatNumber(resources.cpuPercent || 0, 1)}%`)}
-      ${createCompactSummaryCard('Логи', formatNumber((state.runtime.logs || []).length), state.runtime.configPath || 'Путь к конфигу появится после загрузки')}
     </div>
 
     ${botStrip}

@@ -10,8 +10,8 @@ https://github.com/merrobocop/ProstoCraft_Bots/releases
 
 В релизе доступны два отдельных файла:
 
-- `ProstoCraft.Bot.Studio-Setup-1.0.3.exe` - установщик.
-- `ProstoCraft.Bot.Studio-Portable-1.0.3.exe` - portable-запуск без установки.
+- `ProstoCraft.Bot.Studio-Setup-2.0.0.exe` - установщик Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.0.apk` - Android APK.
 
 ## Документация
 
@@ -57,16 +57,16 @@ npm run check
 
 ## Сборка Windows
 
-Собрать установщик и portable сразу:
+Собрать установщик:
 
 ```powershell
-npm run dist:win
+npm run dist:win:installer
 ```
 
-Релизная сборка для GitHub без автопубликации electron-builder:
+Собрать Android APK:
 
 ```powershell
-npm run dist:win:release
+npm run android:build:release
 ```
 
 Собрать только установщик:
@@ -75,19 +75,13 @@ npm run dist:win:release
 npm run dist:win:installer
 ```
 
-Собрать только portable:
-
-```powershell
-npm run dist:win:portable
-```
-
 ## GitHub Release
 
 Чтобы GitHub сам собрал и прикрепил файлы к Releases:
 
 ```powershell
-git tag v1.0.3
-git push origin v1.0.3
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 Локальные логи, сборки, сертификаты, keystore-файлы и runtime-настройки не должны попадать в репозиторий.

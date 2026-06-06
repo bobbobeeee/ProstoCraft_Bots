@@ -1,8 +1,7 @@
 {
   "name": "prostocraft-bot-studio-mobile-runtime",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "main": "mobile-runtime.js",
   "dependencies": {
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
@@ -11,4 +10,3 @@
     "vec3": "^0.1.10"
   }
 }
-

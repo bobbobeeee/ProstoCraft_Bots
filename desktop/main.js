@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, screen, sh
 const { spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const { applyLegacyConfigMigrations } = require('../config-migrations')
 
 const PRODUCT_NAME = 'ProstoCraft Bot Studio'
 const RUNTIME_DIRNAME = 'runtime'
@@ -80,6 +81,10 @@ function getRuntimeLogPath() {
   return path.join(getRuntimeDir(), 'bot.log')
 }
 
+function getRuntimeChatLogPath() {
+  return path.join(getRuntimeDir(), 'chat.log')
+}
+
 function getBackendEntryPath() {
   return path.join(getAppRoot(), 'bot.js')
 }
@@ -126,171 +131,7 @@ function normalizeRuntimeConfig(config) {
   const defaults = readJson(getDefaultConfigPath())
   const merged = mergeDefaults(defaults, config || {})
 
-  if (merged.timing?.startStagger === 30000) {
-    merged.timing.startStagger = defaults.timing?.startStagger ?? 1000
-  }
-
-  if (merged.timing?.startStaggerJitter === 15000) {
-    merged.timing.startStaggerJitter = defaults.timing?.startStaggerJitter ?? 500
-  }
-
-  if ([250, 40, 10].includes(merged.timing?.emptyTargetRecheckMs)) {
-    merged.timing.emptyTargetRecheckMs = defaults.timing?.emptyTargetRecheckMs ?? 5
-  }
-
-  if (merged.timing && Object.prototype.hasOwnProperty.call(merged.timing, 'emptyTargetButtonCooldownMs')) {
-    delete merged.timing.emptyTargetButtonCooldownMs
-  }
-
-  if (merged.timing?.entryButtonAfterPressWaitMs === 1200) {
-    merged.timing.entryButtonAfterPressWaitMs = defaults.timing?.entryButtonAfterPressWaitMs ?? 0
-  }
-
-  if ([25, 10, 5].includes(merged.timing?.miningLoopIdleMs)) {
-    merged.timing.miningLoopIdleMs = defaults.timing?.miningLoopIdleMs ?? 2
-  }
-
-  if ([8, 32, 64].includes(merged.timing?.miningBatchSize)) {
-    merged.timing.miningBatchSize = defaults.timing?.miningBatchSize ?? 96
-  }
-
-  if ([700, 1200].includes(merged.timing?.burstBreakWindowMs)) {
-    merged.timing.burstBreakWindowMs = defaults.timing?.burstBreakWindowMs ?? 1500
-  }
-
-  if ([20, 5].includes(merged.timing?.burstBreakIntervalMs)) {
-    merged.timing.burstBreakIntervalMs = defaults.timing?.burstBreakIntervalMs ?? 1
-  }
-
-  if (merged.timing?.burstBreakRepeats === 3) {
-    merged.timing.burstBreakRepeats = defaults.timing?.burstBreakRepeats ?? 2
-  }
-
-  if ([25, 10].includes(merged.timing?.breakPacketTargetCooldownMs)) {
-    merged.timing.breakPacketTargetCooldownMs = defaults.timing?.breakPacketTargetCooldownMs ?? 12
-  }
-
-  if ([75, 45, 20].includes(merged.timing?.breakPacketMinTargetCooldownMs)) {
-    merged.timing.breakPacketMinTargetCooldownMs = defaults.timing?.breakPacketMinTargetCooldownMs ?? 8
-  }
-
-  if ([72, 108, 160, 240].includes(merged.timing?.breakPacketMaxPerSecond)) {
-    merged.timing.breakPacketMaxPerSecond = defaults.timing?.breakPacketMaxPerSecond ?? 300
-  }
-
-  if ([18, 28, 42, 64].includes(merged.timing?.breakPacketBurstLimit)) {
-    merged.timing.breakPacketBurstLimit = defaults.timing?.breakPacketBurstLimit ?? 84
-  }
-
-  if ([42, 60, 96, 120].includes(merged.timing?.breakPacketSafeMaxPerSecond)) {
-    merged.timing.breakPacketSafeMaxPerSecond = defaults.timing?.breakPacketSafeMaxPerSecond ?? 150
-  }
-
-  if ([10, 15, 24, 32].includes(merged.timing?.breakPacketSafeBurstLimit)) {
-    merged.timing.breakPacketSafeBurstLimit = defaults.timing?.breakPacketSafeBurstLimit ?? 40
-  }
-
-  if (merged.timing?.reactiveBreakRepeats === 2) {
-    merged.timing.reactiveBreakRepeats = defaults.timing?.reactiveBreakRepeats ?? 1
-  }
-
-  if (merged.timing?.transientBreakRepeats === 2) {
-    merged.timing.transientBreakRepeats = defaults.timing?.transientBreakRepeats ?? 1
-  }
-
-  if (merged.timing?.preemptiveBreakTargets === true) {
-    merged.timing.preemptiveBreakTargets = defaults.timing?.preemptiveBreakTargets ?? false
-  }
-
-  if ([120, 60, 25].includes(merged.timing?.fastDigConfirmMs)) {
-    merged.timing.fastDigConfirmMs = defaults.timing?.fastDigConfirmMs ?? 15
-  }
-
-  if (merged.timing?.fastDigRetryMs === 25 || merged.timing?.fastDigRetryMs === 10) {
-    merged.timing.fastDigRetryMs = defaults.timing?.fastDigRetryMs ?? 5
-  }
-
-  if (merged.timing?.fastDigRetryMs === 5) {
-    merged.timing.fastDigRetryMs = defaults.timing?.fastDigRetryMs ?? 1
-  }
-
-  if (merged.timing?.fastDigMinVanillaTimeMs === 250) {
-    merged.timing.fastDigMinVanillaTimeMs = defaults.timing?.fastDigMinVanillaTimeMs ?? 0
-  }
-
-  if ([600000, 900000].includes(merged.timing?.stabilityCooldownMaxMs)) {
-    merged.timing.stabilityCooldownMaxMs = defaults.timing?.stabilityCooldownMaxMs ?? 3600000
-  }
-
-  if (merged.timing?.stabilityCooldownMs === 300000) {
-    merged.timing.stabilityCooldownMs = defaults.timing?.stabilityCooldownMs ?? 0
-  }
-
-  if (merged.timing?.connectionStabilityCooldownMs === 1800000) {
-    merged.timing.connectionStabilityCooldownMs = defaults.timing?.connectionStabilityCooldownMs ?? 0
-  }
-
-  if (merged.timing?.stabilityCooldownMaxMs === 3600000) {
-    merged.timing.stabilityCooldownMaxMs = defaults.timing?.stabilityCooldownMaxMs ?? 0
-  }
-
-  if (merged.timing?.movingPistonWaitMs === 25 || merged.timing?.movingPistonWaitMs === 5) {
-    merged.timing.movingPistonWaitMs = defaults.timing?.movingPistonWaitMs ?? 1
-  }
-
-  if (!Number.isFinite(Number(merged.timing?.minBlocksPerMin)) || Number(merged.timing.minBlocksPerMin) <= 20) {
-    merged.timing.minBlocksPerMin = defaults.timing?.minBlocksPerMin ?? 350
-  }
-
-  if (!Number.isFinite(Number(merged.timing?.speedGuardMinBlocksPerMin)) || Number(merged.timing.speedGuardMinBlocksPerMin) <= 20) {
-    merged.timing.speedGuardMinBlocksPerMin = defaults.timing?.speedGuardMinBlocksPerMin ?? 350
-  }
-
-  if (!Number.isFinite(Number(merged.timing?.speedGuardTargetRatio))) {
-    merged.timing.speedGuardTargetRatio = defaults.timing?.speedGuardTargetRatio ?? 0.82
-  }
-
-  if (merged.log?.maxSizeBytes === 10485760) {
-    merged.log.maxSizeBytes = defaults.log?.maxSizeBytes ?? 52428800
-  }
-
-  if (merged.antibot?.limboFallTicks === 96) {
-    merged.antibot.limboFallTicks = defaults.antibot?.limboFallTicks ?? 128
-  }
-
-  if (merged.antibot?.limboFallPacketMs === 25) {
-    merged.antibot.limboFallPacketMs = defaults.antibot?.limboFallPacketMs ?? 50
-  }
-
-  if (merged.antibot?.limboPostFallJoinMs === 1200) {
-    merged.antibot.limboPostFallJoinMs = defaults.antibot?.limboPostFallJoinMs ?? 900
-  }
-
-  if (merged.antibot?.limboMenuWaitMs === 6500) {
-    merged.antibot.limboMenuWaitMs = defaults.antibot?.limboMenuWaitMs ?? 12000
-  }
-
-  if (!merged.logging || typeof merged.logging !== 'object') {
-    merged.logging = {}
-  }
-
-  if (!merged.features || typeof merged.features !== 'object') {
-    merged.features = {}
-  }
-  merged.features.enableSpeedGuard = merged.features.enableSpeedGuard !== false
-
-  merged.logging.debugMode = merged.logging.debugMode === true
-  merged.logging.detailedEvents = merged.logging.debugMode
-  merged.logging.logServerMessages = merged.logging.debugMode
-  if (merged.logging.diagnosticMaxValueLength === 3000) {
-    merged.logging.diagnosticMaxValueLength = defaults.logging?.diagnosticMaxValueLength ?? 1400
-  }
-  if (!Number.isFinite(Number(merged.logging.diagnosticRepeatSummaryMs))) {
-    merged.logging.diagnosticRepeatSummaryMs = defaults.logging?.diagnosticRepeatSummaryMs ?? 30000
-  }
-  merged.logging.diagnosticFullPacketDetails = merged.logging.diagnosticFullPacketDetails === true
-
-  return merged
+  return applyLegacyConfigMigrations(merged, defaults)
 }
 
 function readDesktopSettings() {
@@ -504,6 +345,7 @@ function buildRuntimePayload() {
     configPath: getRuntimeConfigPath(),
     defaultConfigPath: getDefaultConfigPath(),
     logPath: getRuntimeLogPath(),
+    chatLogPath: getRuntimeChatLogPath(),
     runtimeDir: getRuntimeDir()
   }
 }
@@ -639,7 +481,8 @@ function startRuntime() {
         ELECTRON_RUN_AS_NODE: '1',
         BOT_GUI_MODE: '1',
         BOT_CONFIG_PATH: getRuntimeConfigPath(),
-        BOT_LOG_PATH: getRuntimeLogPath()
+        BOT_LOG_PATH: getRuntimeLogPath(),
+        BOT_CHAT_LOG_PATH: getRuntimeChatLogPath()
       },
       windowsHide: true
     }
