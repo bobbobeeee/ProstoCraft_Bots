@@ -6,9 +6,9 @@ ProstoCraft Bot Studio - desktop-приложение для запуска и �
 
 ## Как скачать
 
-Открой страницу GitHub Releases:
+Открой страницу скачивания:
 
-https://github.com/merrobocop/ProstoCraft_Bots/releases
+https://github.com/merrobocop/ProstoCraft_Bots/releases/latest
 
 Скачай один из файлов:
 
