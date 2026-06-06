@@ -1,7 +1,7 @@
 {
   "name": "com.prostocraft.botstudio.mobile",
   "displayName": "ProstoCraft Bot Studio Mobile",
-  "version": "2.0.3",
+  "version": "2.0.1",
   "description": "Mobile Cordova shell for ProstoCraft Bot Studio with bundled Node.js runtime.",
   "main": "index.js",
   "scripts": {

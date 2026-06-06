@@ -1,6 +1,6 @@
-# ProstoCraft Bot Studio 2.0.3
+# ProstoCraft Bot Studio 2.0.1
 
-Исправление установки обновлений на Android.
+Пересобранный релиз `2.0.1` с исправлением установки обновлений на Android.
 
 ## Что нового
 
@@ -11,6 +11,6 @@
 
 ## Что скачать
 
-- `ProstoCraft.Bot.Studio-Setup-2.0.3.exe` - обычный установщик Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.0.3.apk` - Android APK.
+- `ProstoCraft.Bot.Studio-Setup-2.0.1.exe` - обычный установщик Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.1.apk` - Android APK.
 - `SHA256SUMS.txt` - контрольные суммы файлов.
