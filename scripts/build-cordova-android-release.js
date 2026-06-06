@@ -390,6 +390,7 @@ public class RuntimeKeepAliveService extends Service {
     public static final String ACTION_UPDATE_PROGRESS = "com.prostocraft.botstudio.mobile.action.UPDATE_PROGRESS";
     public static final String ACTION_UPDATE_READY = "com.prostocraft.botstudio.mobile.action.UPDATE_READY";
     public static final String ACTION_UPDATE_INSTALLING = "com.prostocraft.botstudio.mobile.action.UPDATE_INSTALLING";
+    public static final String ACTION_INSTALL_APK = "com.prostocraft.botstudio.mobile.action.INSTALL_APK";
     public static final String ACTION_UPDATE_CLEAR = "com.prostocraft.botstudio.mobile.action.UPDATE_CLEAR";
 
     public static final String EXTRA_PERCENT = "percent";
@@ -427,6 +428,12 @@ public class RuntimeKeepAliveService extends Service {
 
         if (ACTION_UPDATE_INSTALLING.equals(action)) {
             startInForeground(buildUpdateInstallingNotification(intent));
+            return START_STICKY;
+        }
+
+        if (ACTION_INSTALL_APK.equals(action)) {
+            startInForeground(buildUpdateInstallingNotification(intent));
+            openApkInstallerOrSettings(intent != null ? intent.getStringExtra(EXTRA_APK_PATH) : null);
             return START_STICKY;
         }
 
@@ -542,6 +549,27 @@ public class RuntimeKeepAliveService extends Service {
         return builder.build();
     }
 
+    private Notification buildInstallPermissionNotification(String apkPath) {
+        NotificationCompat.Builder builder = createBaseBuilder()
+            .setContentTitle("Нужно разрешение Android")
+            .setContentText("Включите установку из этого источника, затем нажмите Установить.")
+            .setProgress(0, 0, false)
+            .setOngoing(true);
+
+        PendingIntent installIntent = createInstallPendingIntent(apkPath);
+        if (installIntent != null) {
+            builder.setContentIntent(installIntent)
+                .addAction(R.mipmap.ic_launcher, "Установить", installIntent);
+        } else {
+            PendingIntent launchIntent = createLaunchPendingIntent();
+            if (launchIntent != null) {
+                builder.setContentIntent(launchIntent);
+            }
+        }
+
+        return builder.build();
+    }
+
     private NotificationCompat.Builder createBaseBuilder() {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -577,13 +605,66 @@ public class RuntimeKeepAliveService extends Service {
                 getPackageName() + ".cdv.core.file.provider",
                 apkFile
             );
-            Intent installIntent = new Intent(Intent.ACTION_VIEW);
-            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            return PendingIntent.getActivity(this, 1, installIntent, pendingIntentFlags());
+            Intent installIntent = new Intent(this, RuntimeKeepAliveService.class);
+            installIntent.setAction(ACTION_INSTALL_APK);
+            installIntent.putExtra(EXTRA_APK_PATH, apkPath);
+            return PendingIntent.getService(this, 1, installIntent, pendingIntentFlags());
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private boolean canInstallFromThisSource() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return true;
+        }
+
+        return getPackageManager().canRequestPackageInstalls();
+    }
+
+    private void openApkInstallerOrSettings(String apkPath) {
+        try {
+            if (apkPath == null || apkPath.length() == 0) {
+                return;
+            }
+
+            File apkFile = new File(apkPath);
+            if (!apkFile.exists()) {
+                return;
+            }
+
+            if (!canInstallFromThisSource()) {
+                startInForeground(buildInstallPermissionNotification(apkPath));
+                openInstallUnknownAppsSettings();
+                return;
+            }
+
+            Uri apkUri = FileProvider.getUriForFile(
+                this,
+                getPackageName() + ".cdv.core.file.provider",
+                apkFile
+            );
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(installIntent);
+        } catch (Throwable ignored) {}
+    }
+
+    private void openInstallUnknownAppsSettings() {
+        try {
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                intent = new Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())
+                );
+            } else {
+                intent = new Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Throwable ignored) {}
     }
 
     private int pendingIntentFlags() {
@@ -754,6 +835,14 @@ function patchNodeJsMobilePlugin() {
         return;
       }
 
+      if (!canInstallFromThisSource()) {
+        sendUpdateServiceCommand(
+          "update-ready|" + Uri.encode(apkPath) + "|" + Uri.encode(apkFile.getName())
+        );
+        openInstallUnknownAppsSettings();
+        return;
+      }
+
       Uri apkUri = FileProvider.getUriForFile(
         context,
         context.getPackageName() + ".cdv.core.file.provider",
@@ -766,6 +855,17 @@ function patchNodeJsMobilePlugin() {
     } catch (Throwable throwable) {
       Log.w(LOGTAG, "Unable to open APK installer", throwable);
       openInstallUnknownAppsSettings();
+    }
+  }
+
+  private static boolean canInstallFromThisSource() {
+    if (context == null) return false;
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return true;
+
+    try {
+      return context.getPackageManager().canRequestPackageInstalls();
+    } catch (Throwable throwable) {
+      return false;
     }
   }
 
@@ -793,6 +893,43 @@ function patchNodeJsMobilePlugin() {
     source = source.replace(
       /(\s+private static synchronized void setRuntimeKeepAlive\(boolean enabled\) \{)/,
       `${installMethods}$1`
+    )
+  }
+
+  if (source.includes('private static void installDownloadedApk') && !source.includes('canInstallFromThisSource()')) {
+    source = source.replace(
+      `      Uri apkUri = FileProvider.getUriForFile(
+`,
+      `      if (!canInstallFromThisSource()) {
+        sendUpdateServiceCommand(
+          "update-ready|" + Uri.encode(apkPath) + "|" + Uri.encode(apkFile.getName())
+        );
+        openInstallUnknownAppsSettings();
+        return;
+      }
+
+      Uri apkUri = FileProvider.getUriForFile(
+`
+    )
+  }
+
+  if (!source.includes('private static boolean canInstallFromThisSource()')) {
+    source = source.replace(
+      `  private static void openInstallUnknownAppsSettings() {
+`,
+      `  private static boolean canInstallFromThisSource() {
+    if (context == null) return false;
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return true;
+
+    try {
+      return context.getPackageManager().canRequestPackageInstalls();
+    } catch (Throwable throwable) {
+      return false;
+    }
+  }
+
+  private static void openInstallUnknownAppsSettings() {
+`
     )
   }
 

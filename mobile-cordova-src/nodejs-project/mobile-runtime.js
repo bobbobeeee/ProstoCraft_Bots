@@ -48,6 +48,9 @@ const BACKGROUND_PUBLISH_INTERVAL_MS = 5000
 const RUNTIME_HEALTH_CHECK_MS = 15000
 const RUNTIME_STALE_EVENT_MS = 90000
 const RUNTIME_SELF_RESTART_COOLDOWN_MS = 30000
+const INSTALL_RESUME_RETRY_DELAY_MS = 900
+const INSTALL_RESUME_RETRY_COOLDOWN_MS = 3000
+const MAX_INSTALL_RESUME_RETRIES = 3
 let runtimeApi = null
 let runtimeLoaded = false
 let runtimeActive = false
@@ -59,6 +62,9 @@ let publishTimer = null
 let lastPublishedAt = 0
 let lastRuntimeEventAt = Date.now()
 let lastRuntimeSelfRestartAt = 0
+let lastInstallRequestAt = 0
+let installResumeRetryCount = 0
+let installResumeTimer = null
 let appInBackground = false
 
 global.__BOT_EVENT_EMITTER__ = handleBotEvent
@@ -84,6 +90,7 @@ cordova.app.on('pause', pauseLock => {
 cordova.app.on('resume', () => {
   appInBackground = false
   persistRuntimeLog('App resumed.')
+  schedulePendingInstallResume('android-resume')
   publishRuntimeState(true)
 })
 
@@ -283,6 +290,47 @@ function notifyAndroidUpdateClear() {
   sendAndroidSystemMessage('update-clear')
 }
 
+function sendAndroidInstallRequest(apkPath, source = 'install-button') {
+  if (!apkPath || !fs.existsSync(apkPath)) {
+    return false
+  }
+
+  lastInstallRequestAt = Date.now()
+  notifyAndroidUpdateInstalling(apkPath)
+  persistRuntimeLog(
+    source === 'android-resume'
+      ? 'Повторно открываю установку APK после возврата из настроек Android.'
+      : 'Открываю установку APK. Если Android попросит разрешение, включите установку из этого источника.',
+    'info',
+    'UPDATE'
+  )
+  nativeBridge.sendMessage(SYSTEM_CHANNEL, `install-apk|${apkPath}`)
+  return true
+}
+
+function schedulePendingInstallResume(source = 'android-resume') {
+  if (updateState.status !== 'installing') return
+  if (!updateState.downloadedFilePath || !fs.existsSync(updateState.downloadedFilePath)) return
+  if (installResumeRetryCount >= MAX_INSTALL_RESUME_RETRIES) return
+
+  const elapsedMs = Date.now() - lastInstallRequestAt
+  const delayMs = Math.max(
+    INSTALL_RESUME_RETRY_DELAY_MS,
+    INSTALL_RESUME_RETRY_COOLDOWN_MS - elapsedMs
+  )
+
+  if (installResumeTimer) {
+    clearTimeout(installResumeTimer)
+  }
+
+  installResumeTimer = setTimeout(() => {
+    installResumeTimer = null
+    if (updateState.status !== 'installing') return
+    installResumeRetryCount += 1
+    sendAndroidInstallRequest(updateState.downloadedFilePath, source)
+  }, delayMs)
+}
+
 function persistRuntimeLog(message, level = 'info', botName = 'ANDROID') {
   const entry = {
     level,
@@ -355,6 +403,11 @@ function clearPendingUpdateState() {
     fs.rmSync(PENDING_UPDATE_PATH, { force: true })
   } catch (error) {}
 
+  if (installResumeTimer) {
+    clearTimeout(installResumeTimer)
+    installResumeTimer = null
+  }
+  installResumeRetryCount = 0
   notifyAndroidUpdateClear()
   setAndroidUpdateKeepAlive(false)
 }
@@ -558,14 +611,18 @@ function installMobileUpdate() {
   }
 
   setAndroidUpdateKeepAlive(true)
-  notifyAndroidUpdateInstalling(apkPath)
+  installResumeRetryCount = 0
+  if (installResumeTimer) {
+    clearTimeout(installResumeTimer)
+    installResumeTimer = null
+  }
   updateState = {
     ...buildUpdatePayload(),
     status: 'installing',
     error: ''
   }
   publishUpdateState()
-  nativeBridge.sendMessage(SYSTEM_CHANNEL, `install-apk|${apkPath}`)
+  sendAndroidInstallRequest(apkPath, 'install-button')
   return buildUpdatePayload()
 }
 
