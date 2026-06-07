@@ -38,6 +38,18 @@ const { getReconnectDecision } = require('./reconnect-policy')
 
 {
   const decision = getReconnectDecision({
+    type: 'too-many-packets-notice',
+    source: 'server-system'
+  }, { random: () => 0 })
+
+  assert.strictEqual(decision.action, 'schedule')
+  assert.strictEqual(decision.delay, 12000)
+  assert.strictEqual(decision.scheduleReason, 'too-many-packets-server-system')
+  assert.strictEqual(decision.packetSafetySource, 'server-system')
+}
+
+{
+  const decision = getReconnectDecision({
     type: 'kick',
     reason: 'AntiBot: вы превысили время проверки',
     wasInBotFilterCheck: true

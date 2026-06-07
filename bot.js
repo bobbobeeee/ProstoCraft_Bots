@@ -4564,15 +4564,17 @@ function createBot(cfg) {
     updateBotStatus(username, 'ожидание')
 
     if (hasReconnectPendingLocal()) {
+      if (decision.packetSafetySource) activatePacketSafetyMode(decision.packetSafetySource)
       if (String(reconnectReason || '').startsWith('mid-session-')) {
-        diagEvent('too-many-packets-kept-fast-reconnect', {
+        diagEvent('too-many-packets-reschedule-mid-session', {
           source,
           currentReason: reconnectReason,
-          ignoredDelay: decision.delay
+          delay: decision.delay,
+          scheduleReason: decision.scheduleReason
         })
+        rescheduleReconnectLocal(decision.delay, decision.scheduleReason)
         return
       }
-      if (decision.packetSafetySource) activatePacketSafetyMode(decision.packetSafetySource)
       rescheduleReconnectLocal(decision.delay, decision.scheduleReason)
       return
     }
