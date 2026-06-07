@@ -7,6 +7,12 @@ const contrib = require('blessed-contrib')
 const os = require('os')
 const { computeBotRateStats, formatBlocksPerMinute, formatBlocksPerSecond } = require('./monitoring')
 const {
+  classifyHealthEvent,
+  computeSmartRateStats,
+  createHealthState,
+  updateHealthState
+} = require('./stability-center')
+const {
   calculateBotFilterReconnectDelay,
   classifyBotFilterMessage
 } = require('./bot-filter')
@@ -688,7 +694,8 @@ if (!HEADLESS_MODE) {
 const monitorData = {
   startTime: Date.now(),
   bots: {},
-  totalBlocks: 0
+  totalBlocks: 0,
+  health: createHealthState(Date.now())
 }
 const stabilityCooldowns = new Map()
 const packetSafetyCooldowns = new Map()
@@ -698,6 +705,38 @@ monitorData.scriptResources = {
   cpu: [],
   ram: [],
   x: []
+}
+
+function setRuntimeHealth(reason, details = {}) {
+  const previousReason = monitorData.health?.reason
+  monitorData.health = updateHealthState(monitorData.health, { reason, ...details }, Date.now())
+
+  if (monitorData.health.reason !== previousReason && monitorData.health.reason !== 'mining-ok') {
+    const label = getHealthLogLabel(monitorData.health.reason)
+    writeToLogFile(`[HEALTH] ${label}: ${monitorData.health.diagnosis}`)
+  }
+
+  return monitorData.health
+}
+
+function classifyLogHealth(level, message) {
+  if (!message) return null
+  const reason = classifyHealthEvent({ message })
+  if (reason !== 'mining-ok') return reason
+  if (level === 'error') return classifyHealthEvent({ message: `network ${message}` })
+  return null
+}
+
+function getHealthLogLabel(reason) {
+  if (reason === 'dns-failure') return 'NETWORK DNS'
+  if (reason === 'connect-timeout') return 'NETWORK TIMEOUT'
+  if (reason === 'network-reset') return 'NETWORK RESET'
+  if (reason === 'server-world-reset') return 'SERVER RESET'
+  if (reason === 'runtime-stale') return 'BOT STALE'
+  if (reason === 'speed-drop') return 'MINING SPEED'
+  if (reason === 'chat-captcha-hold') return 'BOTFILTER CHAT'
+  if (reason === 'botfilter-hold') return 'BOTFILTER HOLD'
+  return String(reason || 'HEALTH').toUpperCase()
 }
 
 function getSpeedGuardProfile(username) {
@@ -718,10 +757,24 @@ function safeRender() {
 
 function refreshBotRates(now = Date.now()) {
   for (const botData of Object.values(monitorData.bots)) {
-    const stats = computeBotRateStats(botData.blockTimes, now, SPEED_WINDOW_MS)
+    const stats = computeSmartRateStats({
+      blockTimes: botData.blockTimes,
+      now,
+      rawWindowMs: 60000,
+      speedWindowMs: SPEED_WINDOW_MS,
+      status: botData.status,
+      activeSince: botData.rateActiveSince || 0
+    })
     botData.blockTimes = stats.blockTimes
-    botData.blocksLastMinute = stats.blocksLastMinute
-    botData.blocksPerSecond = stats.blocksPerSecond
+    botData.rawBlocksLastMinute = stats.rawBlocksLastMinute
+    botData.rawBlocksPerSecond = stats.rawBlocksPerSecond
+    botData.rawRatePerMinute = stats.rawRatePerMinute
+    botData.effectiveBlocksLastMinute = stats.effectiveRatePerMinute
+    botData.effectiveBlocksPerSecond = stats.effectiveBlocksPerSecond
+    botData.effectiveWindowMs = stats.effectiveWindowMs
+    botData.rateRecovering = stats.recovering
+    botData.blocksLastMinute = stats.effectiveRatePerMinute
+    botData.blocksPerSecond = stats.effectiveBlocksPerSecond
   }
 }
 
@@ -740,14 +793,18 @@ function updateInfoBox() {
     .reduce((sum, bot) => sum + (bot.blocksPerSecond || 0), 0)
   const currentRatePerMinute = Object.values(monitorData.bots)
     .reduce((sum, bot) => sum + (bot.blocksLastMinute || 0), 0)
+  const rawRatePerMinute = Object.values(monitorData.bots)
+    .reduce((sum, bot) => sum + (bot.rawBlocksLastMinute || 0), 0)
+  const health = monitorData.health || createHealthState()
 
   infoBox.setContent([
     `  {cyan-fg}  Время работы:{/cyan-fg}  {bold}${hours}ч ${minutes}м ${seconds}с{/bold}`,
     `  {green-fg} Боты активны:{/green-fg}  {bold}${activeBots}/${totalBots}{/bold}`,
     `  {yellow-fg} Добыто блоков:{/yellow-fg}  {bold}${monitorData.totalBlocks}{/bold}`,
     `  {magenta-fg} Средняя скорость:{/magenta-fg}  {bold}${avgRate} блоков/час{/bold}`,
-    `  {white-fg} Текущая скорость:{/white-fg}  {bold}${formatBlocksPerSecond(currentRate)}{/bold}`,
-    `  {white-fg} За минуту:{/white-fg}  {bold}${formatBlocksPerMinute(currentRatePerMinute)}{/bold}`,
+    `  {white-fg} Effective:{/white-fg}  {bold}${formatBlocksPerSecond(currentRate)} | ${formatBlocksPerMinute(currentRatePerMinute)}{/bold}`,
+    `  {white-fg} Raw:{/white-fg}  {bold}${formatBlocksPerMinute(rawRatePerMinute)}{/bold}`,
+    `  {${health.severity === 'error' ? 'red' : health.severity === 'warning' ? 'yellow' : 'green'}-fg} Health:{/}  {bold}${getHealthLogLabel(health.reason)}{/bold}`,
     `  {blue-fg} Ротация:{/blue-fg}  {bold}каждые ${Math.round(PERIODIC_REJOIN_MS / 60000)} мин{/bold}`,
     `  {${diggingPaused ? 'red' : 'green'}-fg} Копание:{/}  {bold}${diggingPaused ? 'ПАУЗА' : 'АКТИВНО'}{/bold}`
   ].join('\n'))
@@ -821,11 +878,18 @@ function updateBotsTable() {
 }
 
 function buildRuntimeSnapshot() {
-  const uptime = Date.now() - monitorData.startTime
+  const now = Date.now()
+  const uptime = now - monitorData.startTime
   const currentRatePerMinute = Object.values(monitorData.bots)
     .reduce((sum, bot) => sum + (bot.blocksLastMinute || 0), 0)
   const currentRatePerSecond = Object.values(monitorData.bots)
     .reduce((sum, bot) => sum + (bot.blocksPerSecond || 0), 0)
+  const currentRawRatePerMinute = Object.values(monitorData.bots)
+    .reduce((sum, bot) => sum + (bot.rawBlocksLastMinute || 0), 0)
+  const currentRawRatePerSecond = Object.values(monitorData.bots)
+    .reduce((sum, bot) => sum + (bot.rawBlocksPerSecond || 0), 0)
+  const health = updateHealthState(monitorData.health, {}, now)
+  monitorData.health = health
 
   return {
     totalBlocks: monitorData.totalBlocks,
@@ -837,6 +901,21 @@ function buildRuntimeSnapshot() {
     logFilePath: LOG_FILE_PATH,
     currentRatePerMinute,
     currentRatePerSecond,
+    currentEffectiveRatePerMinute: currentRatePerMinute,
+    currentEffectiveRatePerSecond: currentRatePerSecond,
+    currentRawRatePerMinute,
+    currentRawRatePerSecond,
+    health: {
+      state: health.state,
+      reason: health.reason,
+      severity: health.severity,
+      since: health.since,
+      downtimeMs: health.downtimeMs,
+      diagnosis: health.diagnosis,
+      lastNetworkError: health.lastNetworkError,
+      lastReconnectReason: health.lastReconnectReason,
+      lastRecoveryAction: health.lastRecoveryAction
+    },
     bots: Object.fromEntries(
       Object.entries(monitorData.bots).map(([botName, botData]) => [
         botName,
@@ -845,6 +924,13 @@ function buildRuntimeSnapshot() {
           blocksTotal: botData.blocksTotal || 0,
           blocksLastMinute: botData.blocksLastMinute || 0,
           blocksPerSecond: botData.blocksPerSecond || 0,
+          effectiveBlocksLastMinute: botData.effectiveBlocksLastMinute || 0,
+          effectiveBlocksPerSecond: botData.effectiveBlocksPerSecond || 0,
+          rawBlocksLastMinute: botData.rawBlocksLastMinute || 0,
+          rawBlocksPerSecond: botData.rawBlocksPerSecond || 0,
+          rateRecovering: Boolean(botData.rateRecovering),
+          rateActiveSince: botData.rateActiveSince || 0,
+          effectiveWindowMs: botData.effectiveWindowMs || 0,
           lastBlockTime: botData.lastBlockTime || null
         }
       ])
@@ -871,12 +957,22 @@ function addLog(level, botName, message) {
   const color = colors[level] || '{white-fg}'
   const icon = icons[level] || 'i'
   
-  const cleanMessage = message
+  const stringMessage = String(message ?? '')
+  const cleanMessage = stringMessage
     .replace(/[\u{1F300}-\u{1F9FF}]/gu, '')
     .replace(/[\u{2600}-\u{26FF}]/gu, '')
     .replace(/[\u{2700}-\u{27BF}]/gu, '')
     .replace(/[+✗⚠•⏸▶OKERR]/g, '')
     .trim()
+
+  const healthReason = classifyLogHealth(level, cleanMessage)
+  if (healthReason && healthReason !== 'mining-ok') {
+    setRuntimeHealth(healthReason, {
+      message: cleanMessage,
+      lastNetworkError: ['network-reset', 'dns-failure', 'connect-timeout'].includes(healthReason) ? cleanMessage : undefined,
+      lastRecoveryAction: level === 'error' || level === 'warning' ? 'auto-recovery pending' : undefined
+    })
+  }
   
   const plainLine = `[${time}] [${level.toUpperCase()}] [${botName}] ${cleanMessage}`
   if (HEADLESS_MODE && !GUI_EVENT_MODE) {
@@ -963,18 +1059,38 @@ function addChatLog(botName, message, source = 'server-message', details = {}) {
 }
 
 function updateBotStatus(botName, status, data = {}) {
+  const now = Date.now()
   if (!monitorData.bots[botName]) {
     monitorData.bots[botName] = {
-      status, blocksTotal: 0, blocksLastMinute: 0, blocksPerSecond: 0,
-      lastBlockTime: Date.now(), blockTimes: []
+      status,
+      blocksTotal: 0,
+      blocksLastMinute: 0,
+      blocksPerSecond: 0,
+      rawBlocksLastMinute: 0,
+      rawBlocksPerSecond: 0,
+      effectiveBlocksLastMinute: 0,
+      effectiveBlocksPerSecond: 0,
+      rateActiveSince: status === 'копает' ? now : 0,
+      rateStatusChangedAt: now,
+      lastBlockTime: now,
+      blockTimes: []
     }
   }
   const bot = monitorData.bots[botName]
+  const previousStatus = bot.status
   bot.status = status
+  if (previousStatus !== status) {
+    bot.rateStatusChangedAt = now
+    if (status === 'копает') {
+      bot.rateActiveSince = now
+      setRuntimeHealth('mining-ok', { lastRecoveryAction: 'mining-resumed' })
+    } else {
+      bot.rateActiveSince = 0
+    }
+  }
   if (data.blockMined) {
     bot.blocksTotal++
     monitorData.totalBlocks++
-    const now = Date.now()
     bot.blockTimes.push(now)
     bot.lastBlockTime = now
   } else if (data.timestamp) {
@@ -1168,11 +1284,27 @@ function checkAndRestartStuckBots() {
         const lifecycle = typeof botObj.getLifecycleSnapshot === 'function'
           ? botObj.getLifecycleSnapshot()
           : { state: 'unknown', ageMs: 0 }
-        const lifecycleBusy = lifecycle.state === 'botfilter' || lifecycle.state === 'waiting-reconnect'
+        const reconnectDueAt = Number(botObj.reconnectDueAt) || 0
+        const reconnectOverdue = reconnectDueAt > 0 && now - reconnectDueAt > Math.min(OFFLINE_WATCHDOG_MS, 30000)
+        const reconnectStuck = lifecycle.state === 'waiting-reconnect' &&
+          lifecycle.ageMs > OFFLINE_WATCHDOG_MS &&
+          (!reconnectPending || reconnectOverdue)
+        const lifecycleBusy = lifecycle.state === 'botfilter' || (lifecycle.state === 'waiting-reconnect' && !reconnectStuck)
         const recoverableStatus = botData.status === 'оффлайн' || botData.status === 'ожидание'
         
-        if (timeSinceLastBlock > OFFLINE_WATCHDOG_MS && recoverableStatus && !reconnectPending && !botFilterBusy && !lifecycleBusy) {
-          addLog('warning', 'SYSTEM', `Бот ${botObj.username} застрял офлайн (${Math.round(timeSinceLastBlock/1000)}с) - перезапуск`)
+        if (
+          timeSinceLastBlock > OFFLINE_WATCHDOG_MS &&
+          recoverableStatus &&
+          !botFilterBusy &&
+          !lifecycleBusy &&
+          (!reconnectPending || reconnectOverdue || reconnectStuck)
+        ) {
+          const reason = reconnectStuck || reconnectOverdue ? 'reconnect timer stuck' : 'offline watchdog'
+          setRuntimeHealth('runtime-stale', {
+            lastReconnectReason: reason,
+            lastRecoveryAction: 'bot instance restart'
+          })
+          addLog('warning', 'SYSTEM', `Бот ${botObj.username} застрял офлайн (${Math.round(timeSinceLastBlock/1000)}с, ${reason}) - перезапуск`)
           
           const cfg = botsConfigs.find(c => c.username === botObj.username)
           if (cfg) {
@@ -1798,9 +1930,15 @@ function createBot(cfg) {
     const botData = monitorData.bots[username]
     if (!botData) return 0
 
-    const stats = computeBotRateStats(botData.blockTimes, Date.now(), getSpeedGuardRateWindowMs())
-    const stableWindowRate = (Number(stats.blocksPerSecond) || 0) * 60
-    return Number.isFinite(stableWindowRate) ? stableWindowRate : 0
+    const stats = computeSmartRateStats({
+      blockTimes: botData.blockTimes,
+      now: Date.now(),
+      rawWindowMs: getSpeedGuardRateWindowMs(),
+      speedWindowMs: getSpeedGuardRateWindowMs(),
+      status: botData.status,
+      activeSince: botData.rateActiveSince || 0
+    })
+    return Number.isFinite(stats.effectiveRatePerMinute) ? stats.effectiveRatePerMinute : 0
   }
 
   function getSpeedGuardPeak() {
@@ -1884,6 +2022,10 @@ function createBot(cfg) {
       (Number.isFinite(idleFor) && idleFor >= 3000)
 
     if (shouldLogRecoveryWarning) {
+      setRuntimeHealth('speed-drop', {
+        lastRecoveryAction: 'speed-guard recovery',
+        diagnosis: `Причина просадки: скорость ${Math.round(currentRate)} б/м ниже адаптивной цели ${Math.round(targetRate)} б/м.`
+      })
       addLog(
         'warning',
         username,
@@ -2017,6 +2159,9 @@ function createBot(cfg) {
       const isLearningBaseline = targetRate <= 0
       const isHealthyRate = targetRate > 0 && currentRate >= targetRate
       if (isHealthyRate || (isLearningBaseline && hasFreshProgress)) {
+        if (monitorData.health?.reason === 'speed-drop') {
+          setRuntimeHealth('mining-ok', { lastRecoveryAction: 'speed restored' })
+        }
         resetSpeedGuardLowState()
         return
       }
@@ -4160,6 +4305,13 @@ function createBot(cfg) {
     }
     
     setLifecycleState('waiting-reconnect', reason, { delay, forcedReconnect })
+    const reconnectHealthReason = classifyHealthEvent({ reason })
+    if (reconnectHealthReason !== 'mining-ok') {
+      setRuntimeHealth(reconnectHealthReason, {
+        reconnectReason: reason,
+        lastRecoveryAction: 'reconnect scheduled'
+      })
+    }
     reconnectScheduled = true
     reconnectReason = reason
 
@@ -4546,6 +4698,10 @@ function createBot(cfg) {
     if (joinedSubserver || hasReconnectPendingLocal()) return
     const challengeSessionEpoch = sessionEpoch
     setLifecycleState('botfilter', source, { challenge: 'fall-wait' })
+    setRuntimeHealth('botfilter-hold', {
+      lastRecoveryAction: 'waiting fall-check position',
+      diagnosis: 'Бот проходит fall-проверку BotFilter/LimboFilter.'
+    })
     scannerWaitChallengeActive = true
     waitingForFall = true
     fallCheckPassed = false
@@ -4637,6 +4793,10 @@ function createBot(cfg) {
   function handleChatCaptchaChallenge(rawText, source = 'server-message') {
     const now = Date.now()
     setLifecycleState('botfilter', source, { challenge: 'chat-captcha' })
+    setRuntimeHealth('chat-captcha-hold', {
+      lastRecoveryAction: '30-minute captcha hold',
+      diagnosis: `Чат-капча обнаружена, бот ждёт ${Math.round(CHAT_CAPTCHA_RECONNECT_MS / 60000)} минут перед новым входом.`
+    })
     scannerHoldUntil = Math.max(scannerHoldUntil, now + CHAT_CAPTCHA_RECONNECT_MS)
     setMenuStage('chat-captcha-hold', source)
 
@@ -5772,13 +5932,19 @@ setInterval(() => {
     ? (monitorData.totalBlocks / (uptime / 3600000)).toFixed(1) : '0.0'
   const currentRatePerMinute = Object.values(monitorData.bots)
     .reduce((sum, bot) => sum + (bot.blocksLastMinute || 0), 0)
+  const currentRawRatePerMinute = Object.values(monitorData.bots)
+    .reduce((sum, bot) => sum + (bot.rawBlocksLastMinute || 0), 0)
   const currentRatePerMinuteLabel = formatBlocksPerMinute(currentRatePerMinute)
+  const currentRawRatePerMinuteLabel = formatBlocksPerMinute(currentRawRatePerMinute)
+  const health = updateHealthState(monitorData.health, {}, Date.now())
+  monitorData.health = health
   
   writeToLogFile(`=== СТАТИСТИКА === Время: ${hours}ч ${minutes}м | Боты: ${activeBots}/${totalBots} | Добыто: ${monitorData.totalBlocks} блоков | Скорость: ${avgRate} бл/ч`)
   
-  writeToLogFile(`RATE/MIN: ${currentRatePerMinuteLabel}`)
+  writeToLogFile(`RATE/MIN: ${currentRatePerMinuteLabel} | RAW: ${currentRawRatePerMinuteLabel}`)
+  writeToLogFile(`HEALTH: ${getHealthLogLabel(health.reason)} | ${health.diagnosis}`)
   for (const [botName, botData] of Object.entries(monitorData.bots)) {
-    writeToLogFile(`  ${botName.padEnd(20)} | Статус: ${botData.status.padEnd(12)} | Добыто: ${botData.blocksTotal} | Скорость: ${formatBlocksPerSecond(botData.blocksPerSecond || 0)}`)
+    writeToLogFile(`  ${botName.padEnd(20)} | Статус: ${botData.status.padEnd(12)} | Добыто: ${botData.blocksTotal} | Effective: ${formatBlocksPerSecond(botData.blocksPerSecond || 0)} | Raw: ${formatBlocksPerSecond(botData.rawBlocksPerSecond || 0)}`)
   }
 }, 300000)
 

@@ -7,6 +7,11 @@ const {
   compareVersions,
   downloadUpdate
 } = require('./update-service')
+const {
+  createHealthState,
+  getRuntimeRecoveryDecision,
+  updateHealthState
+} = require('./stability-center')
 const packageMetadata = require('./package.json')
 
 const DATA_DIR = cordova.app.datadir()
@@ -19,6 +24,7 @@ const PENDING_UPDATE_PATH = path.join(UPDATES_DIR, 'pending-update.json')
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.json')
 const BOT_ENTRY_PATH = path.join(__dirname, 'bot.js')
 const MONITORING_PATH = path.join(__dirname, 'monitoring.js')
+const STABILITY_CENTER_PATH = path.join(__dirname, 'stability-center.js')
 const SYSTEM_CHANNEL = '_SYSTEM_'
 const APP_VERSION = packageMetadata.version || '0.0.0'
 const UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]
@@ -116,8 +122,10 @@ function createEmptyRuntime() {
       paused: false,
       currentRatePerMinute: 0,
       currentRatePerSecond: 0,
-      bots: {}
+      bots: {},
+      health: createHealthState(Date.now())
     },
+    health: createHealthState(Date.now()),
     logs: [],
     chatLogs: [],
     configPath: CONFIG_PATH,
@@ -244,7 +252,16 @@ function setAndroidRuntimeKeepAlive(nextEnabled) {
 }
 
 function syncRuntimeKeepAlive() {
-  setAndroidRuntimeKeepAlive((runtimeActive && !runtimeState.isPaused) || updateKeepAliveEnabled)
+  setAndroidRuntimeKeepAlive((runtimeDesired && !runtimeState.isPaused) || updateKeepAliveEnabled)
+}
+
+function setRuntimeHealth(reason, details = {}) {
+  runtimeState.health = updateHealthState(runtimeState.health, { reason, ...details }, Date.now())
+  runtimeState.snapshot = {
+    ...runtimeState.snapshot,
+    health: runtimeState.health
+  }
+  return runtimeState.health
 }
 
 function setAndroidUpdateKeepAlive(nextEnabled) {
@@ -653,6 +670,7 @@ function unloadBotRuntime(reason = 'reload') {
 
   delete require.cache[BOT_ENTRY_PATH]
   delete require.cache[MONITORING_PATH]
+  delete require.cache[STABILITY_CENTER_PATH]
 }
 
 function ensureBotRuntime(forceReload = false) {
@@ -678,6 +696,10 @@ function restartRuntimeFromWatchdog(reason = 'runtime-watchdog') {
   }
 
   lastRuntimeSelfRestartAt = now
+  setRuntimeHealth('runtime-stale', {
+    lastRecoveryAction: 'android watchdog restart',
+    diagnosis: `Android runtime восстановил backend: ${reason}.`
+  })
   persistRuntimeLog(`Runtime watchdog restart: ${reason}`, 'warning', 'ANDROID')
 
   try {
@@ -713,8 +735,16 @@ function checkRuntimeHealth() {
     return
   }
 
-  if (now - lastRuntimeEventAt > RUNTIME_STALE_EVENT_MS) {
-    restartRuntimeFromWatchdog(`runtime-silent-${Math.round((now - lastRuntimeEventAt) / 1000)}s`)
+  const decision = getRuntimeRecoveryDecision({
+    now,
+    running: runtimeActive,
+    desired: runtimeDesired,
+    lastEventAt: lastRuntimeEventAt,
+    staleAfterMs: RUNTIME_STALE_EVENT_MS
+  })
+
+  if (decision.action === 'restart-runtime') {
+    restartRuntimeFromWatchdog(`runtime-silent-${Math.round((decision.staleForMs || 0) / 1000)}s`)
   }
 }
 
@@ -756,6 +786,7 @@ function handleBotEvent(type, payload = {}) {
     }
   } else if (type === 'snapshot') {
     runtimeState.snapshot = payload
+    runtimeState.health = payload.health || runtimeState.health
     runtimeState.isPaused = Boolean(payload.paused)
     runtimeState.status = runtimeActive ? 'running' : runtimeState.status
   } else if (type === 'host-shutdown') {

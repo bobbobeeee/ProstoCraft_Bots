@@ -17,18 +17,18 @@ npm run android:build:release
 
 GitHub Release создаётся автоматически, когда в репозиторий отправляется тег вида `v*`.
 
-Пример для версии `2.0.1`:
+Пример для версии `2.0.2`:
 
 ```powershell
 git status
-git tag v2.0.1
-git push origin v2.0.1
+git tag v2.0.2
+git push origin v2.0.2
 ```
 
 GitHub Actions соберёт:
 
-- установщик `ProstoCraft.Bot.Studio-Setup-2.0.1.exe`;
-- Android APK `ProstoCraft.Bot.Studio-Mobile-2.0.1.apk`;
+- установщик `ProstoCraft.Bot.Studio-Setup-2.0.2.exe`;
+- Android APK `ProstoCraft.Bot.Studio-Mobile-2.0.2.apk`;
 - файл `SHA256SUMS.txt`.
 
 Готовый релиз появится здесь:
@@ -39,6 +39,6 @@ https://github.com/bobbobeeee/ProstoCraft_Bots/releases
 
 ## Если нужно обновить релиз
 
-1. Удали старый тег на GitHub или создай новый тег, например `v2.0.1`.
+1. Удали старый тег на GitHub или создай новый тег, например `v2.0.2`.
 2. Обнови `CHANGELOG.md` и `RELEASE_NOTES.md`.
 3. Запушь новый тег.

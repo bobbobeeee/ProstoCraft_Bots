@@ -795,6 +795,73 @@ function formatStatus(status) {
   return map[status] || map.stopped
 }
 
+function getRuntimeHealth(snapshot = state.runtime.snapshot || {}) {
+  return snapshot.health || state.runtime.health || {
+    state: 'healthy',
+    reason: 'mining-ok',
+    severity: 'ok',
+    since: '',
+    downtimeMs: 0,
+    diagnosis: 'Скорость нормальная, копание активно.',
+    lastNetworkError: '',
+    lastReconnectReason: '',
+    lastRecoveryAction: ''
+  }
+}
+
+function formatHealthReason(reason) {
+  const map = {
+    'mining-ok': 'Скорость нормальная',
+    'network-reset': 'Сеть: сброс',
+    'dns-failure': 'Сеть: DNS',
+    'connect-timeout': 'Сеть: таймаут',
+    'server-world-reset': 'Сервер сбросил мир',
+    'runtime-stale': 'Runtime завис',
+    'speed-drop': 'Просадка скорости',
+    'botfilter-hold': 'BotFilter hold',
+    'chat-captcha-hold': 'Чат-капча'
+  }
+  return map[reason] || String(reason || 'Неизвестно')
+}
+
+function getHealthClass(health) {
+  const severity = health?.severity || 'ok'
+  if (severity === 'error') return 'health-card--error'
+  if (severity === 'warning') return 'health-card--warning'
+  return 'health-card--ok'
+}
+
+function renderHealthDashboardCard(snapshot = state.runtime.snapshot || {}) {
+  const health = getRuntimeHealth(snapshot)
+  const rawRate = snapshot.currentRawRatePerMinute || 0
+  const effectiveRate = snapshot.currentEffectiveRatePerMinute ?? snapshot.currentRatePerMinute ?? 0
+  const downtime = formatDuration(health.downtimeMs || 0)
+  const lastNetworkError = health.lastNetworkError || 'нет'
+  const reconnectReason = health.lastReconnectReason || 'нет'
+  const recoveryAction = health.lastRecoveryAction || 'ожидание событий'
+
+  return `
+    <article class="dashboard-card dashboard-card--health ${getHealthClass(health)}">
+      <div class="panel-header panel-header--spread">
+        <div>
+          <p class="eyebrow">Состояние</p>
+          <h4>${escapeHtml(formatHealthReason(health.reason))}</h4>
+        </div>
+        <span class="chip health-chip">${escapeHtml(health.state || 'healthy')}</span>
+      </div>
+      <p class="health-diagnosis">${escapeHtml(health.diagnosis || '')}</p>
+      <div class="dashboard-meta">
+        <div class="dashboard-meta-row"><span>Effective</span><strong>${formatNumber(effectiveRate, 1)} б/м</strong></div>
+        <div class="dashboard-meta-row"><span>Raw с простоями</span><strong>${formatNumber(rawRate, 1)} б/м</strong></div>
+        <div class="dashboard-meta-row"><span>Простой</span><strong>${escapeHtml(downtime)}</strong></div>
+        <div class="dashboard-meta-row"><span>Reconnect</span><strong>${escapeHtml(reconnectReason)}</strong></div>
+        <div class="dashboard-meta-row"><span>Сеть</span><strong>${escapeHtml(lastNetworkError)}</strong></div>
+        <div class="dashboard-meta-row"><span>Действие</span><strong>${escapeHtml(recoveryAction)}</strong></div>
+      </div>
+    </article>
+  `
+}
+
 function formatLiveStatus(status) {
   const map = {
     stopped: 'Остановлен',
@@ -807,6 +874,11 @@ function formatLiveStatus(status) {
     offline: 'Оффлайн',
     online: 'Онлайн',
     mining: 'Добывает',
+    'копает': 'Добывает',
+    'ожидание': 'Ожидает',
+    'оффлайн': 'Оффлайн',
+    'подключается': 'Подключается',
+    'возврат': 'Возврат',
     error: 'Ошибка'
   }
 
@@ -822,10 +894,14 @@ function getLiveStatusClass(status) {
     starting: 'bot-live--busy',
     stopping: 'bot-live--busy',
     reconnecting: 'bot-live--busy',
+    'подключается': 'bot-live--busy',
     paused: 'bot-live--warn',
     idle: 'bot-live--warn',
+    'ожидание': 'bot-live--warn',
     error: 'bot-live--bad',
     offline: 'bot-live--idle',
+    'оффлайн': 'bot-live--idle',
+    'копает': 'bot-live--good',
     stopped: 'bot-live--idle'
   }
 
@@ -1590,6 +1666,7 @@ function renderChrome() {
   const configuredBots = getBots().length
   const snapshot = state.runtime.snapshot || {}
   const resources = state.runtime.resources || {}
+  const health = getRuntimeHealth(snapshot)
   const runtimeTotalBots = snapshot.totalBots || configuredBots
   const activeBots = snapshot.activeBots || 0
   const {
@@ -1687,7 +1764,12 @@ function renderChrome() {
     createSummaryCard(
       'Текущий темп добычи',
       `${formatNumber(snapshot.currentRatePerMinute || 0, 1)} блок/мин`,
-      `${formatNumber(snapshot.currentRatePerSecond || 0, 2)} блок/с`
+      `${formatNumber(snapshot.currentRatePerSecond || 0, 2)} блок/с · raw ${formatNumber(snapshot.currentRawRatePerMinute || 0, 1)} б/м`
+    ),
+    createSummaryCard(
+      'Состояние',
+      escapeHtml(formatHealthReason(health.reason)),
+      escapeHtml(health.diagnosis || '')
     ),
     createSummaryCard(
       'Ресурсы процесса',
@@ -1766,10 +1848,13 @@ function renderChrome() {
 
 function renderDashboard() {
   const snapshotBots = state.runtime.snapshot?.bots || {}
+  const snapshot = state.runtime.snapshot || {}
   const configBots = getBots()
   const configuredNames = new Set(configBots.map(bot => bot.username))
   const cards = []
   const supportsRuntimeControl = state.capabilities.runtimeControl !== false
+
+  cards.push(renderHealthDashboardCard(snapshot))
 
   if (!supportsRuntimeControl) {
     cards.push(`
@@ -1814,8 +1899,8 @@ function renderDashboard() {
           </div>
           <div class="dashboard-meta">
             <div class="dashboard-meta-row"><span>Добыто блоков</span><strong>${formatNumber(botData?.blocksTotal || 0)}</strong></div>
-            <div class="dashboard-meta-row"><span>Блоков в минуту</span><strong>${formatNumber(botData?.blocksLastMinute || 0, 1)}</strong></div>
-            <div class="dashboard-meta-row"><span>Блоков в секунду</span><strong>${formatNumber(botData?.blocksPerSecond || 0, 2)}</strong></div>
+            <div class="dashboard-meta-row"><span>Effective</span><strong>${formatNumber(botData?.effectiveBlocksLastMinute ?? botData?.blocksLastMinute ?? 0, 1)} б/м</strong></div>
+            <div class="dashboard-meta-row"><span>Raw</span><strong>${formatNumber(botData?.rawBlocksLastMinute || 0, 1)} б/м</strong></div>
             <div class="dashboard-meta-row"><span>Последний блок</span><strong>${escapeHtml(lastBlockLabel)}</strong></div>
           </div>
         </article>
@@ -1846,10 +1931,10 @@ function renderDashboard() {
       `)
     })
   } else {
-    elements.dashboardBotGrid.innerHTML = supportsRuntimeControl
+    cards.push(supportsRuntimeControl
       ? '<div class="dashboard-empty">Добавьте хотя бы одного бота, затем запустите backend, и здесь появится живая сводка по каждому боту.</div>'
       : '<div class="dashboard-empty">Добавьте хотя бы одного бота. Мобильная сборка сразу покажет конфиг, маршруты и локально сохраненные параметры.</div>'
-    return
+    )
   }
 
   elements.dashboardBotGrid.innerHTML = cards.join('')
@@ -3089,6 +3174,7 @@ function renderActionButtons(actions) {
 function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, runtimeTotalBots, snapshot, resources, statusCopy }) {
   const selectedBot = getSelectedBot()
   const snapshotBots = state.runtime.snapshot?.bots || {}
+  const health = getRuntimeHealth(snapshot)
 
   const botStrip = getBots().length
     ? `
@@ -3138,7 +3224,8 @@ function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, 
 
     <div class="mini-summary-grid">
       ${createCompactSummaryCard('Всего добыто', formatNumber(snapshot.totalBlocks || 0), `Аптайм ${formatDuration(snapshot.uptimeMs || 0)}`)}
-      ${createCompactSummaryCard('Текущий темп', `${formatNumber(snapshot.currentRatePerMinute || 0, 1)} бл/мин`, `${formatNumber(snapshot.currentRatePerSecond || 0, 2)} бл/с`)}
+      ${createCompactSummaryCard('Effective', `${formatNumber(snapshot.currentRatePerMinute || 0, 1)} бл/мин`, `Raw ${formatNumber(snapshot.currentRawRatePerMinute || 0, 1)} б/м`)}
+      ${createCompactSummaryCard('Состояние', formatHealthReason(health.reason), health.diagnosis || '')}
       ${createCompactSummaryCard('Память', `${formatNumber(resources.memoryMb || 0, 1)} MB`, `CPU ${formatNumber(resources.cpuPercent || 0, 1)}%`)}
     </div>
 

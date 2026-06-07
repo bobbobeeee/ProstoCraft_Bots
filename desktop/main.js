@@ -8,6 +8,11 @@ const {
   checkForUpdates,
   downloadUpdate
 } = require('../update-service')
+const {
+  createHealthState,
+  getRuntimeRecoveryDecision,
+  updateHealthState
+} = require('../stability-center')
 const packageMetadata = require('../package.json')
 
 const PRODUCT_NAME = 'ProstoCraft Bot Studio'
@@ -18,6 +23,9 @@ const MAX_RECENT_LOGS = 300
 const MAX_RECENT_CHAT_LOGS = 500
 const BOT_EVENT_PREFIX = '@@BOT_EVENT@@'
 const DESKTOP_SETTINGS_FILE = 'desktop-settings.json'
+const RUNTIME_STALE_CHECK_MS = 30000
+const RUNTIME_STALE_AFTER_MS = 10 * 60 * 1000
+const RUNTIME_STALE_RESTART_COOLDOWN_MS = 5 * 60 * 1000
 const DEFAULT_DESKTOP_SETTINGS = {
   launchOnStartup: false,
   autoStartBotsOnLaunch: false,
@@ -34,6 +42,7 @@ let stderrBuffer = ''
 let tray = null
 let isQuitting = false
 let latestUpdateInfo = null
+let lastRuntimeStaleRestartAt = 0
 
 let updateState = createEmptyUpdateState()
 
@@ -60,6 +69,7 @@ const runtimeState = {
     currentRatePerSecond: 0,
     bots: {}
   },
+  health: createHealthState(Date.now()),
   logs: [],
   chatLogs: []
 }
@@ -371,9 +381,24 @@ function pushChatLog(entry) {
   runtimeState.chatLogs = [...(runtimeState.chatLogs || []), normalizedEntry].slice(-MAX_RECENT_CHAT_LOGS)
 }
 
+function setRuntimeHealth(reason, details = {}) {
+  runtimeState.health = updateHealthState(runtimeState.health, { reason, ...details }, Date.now())
+  runtimeState.snapshot = {
+    ...runtimeState.snapshot,
+    health: runtimeState.health
+  }
+  return runtimeState.health
+}
+
 function buildRuntimePayload() {
+  const health = runtimeState.snapshot?.health || runtimeState.health || createHealthState(Date.now())
   return {
     ...runtimeState,
+    health,
+    snapshot: {
+      ...runtimeState.snapshot,
+      health
+    },
     configPath: getRuntimeConfigPath(),
     defaultConfigPath: getDefaultConfigPath(),
     logPath: getRuntimeLogPath(),
@@ -541,6 +566,7 @@ function appendRawProcessOutput(source, line) {
   const trimmed = line.trim()
   if (!trimmed) return
 
+  runtimeState.lastEventAt = Date.now()
   pushLog({
     level: source === 'stderr' ? 'error' : 'info',
     botName: source.toUpperCase(),
@@ -566,6 +592,7 @@ function handleRuntimeEvent(eventType, payload) {
     }
   } else if (eventType === 'snapshot') {
     runtimeState.snapshot = payload
+    runtimeState.health = payload.health || runtimeState.health
     runtimeState.isPaused = Boolean(payload.paused)
   }
 
@@ -603,8 +630,10 @@ function attachRuntimeProcess(childProcess) {
   childProcess.stderr.on('data', chunk => flushBufferedOutput('stderr', chunk, 'stderr'))
 
   childProcess.once('spawn', () => {
+    const now = Date.now()
     runtimeState.status = 'running'
-    runtimeState.startedAt = Date.now()
+    runtimeState.startedAt = now
+    runtimeState.lastEventAt = now
     runtimeState.stoppedAt = null
     runtimeState.exitCode = null
     runtimeState.exitSignal = null
@@ -628,6 +657,11 @@ function attachRuntimeProcess(childProcess) {
     runtimeState.exitCode = code
     runtimeState.exitSignal = signal
     runtimeState.pid = null
+    if (runtimeState.status === 'error') {
+      setRuntimeHealth('runtime-stale', {
+        lastRecoveryAction: `runtime exited (${code ?? signal ?? 'unknown'})`
+      })
+    }
     publishRuntimeState()
 
     if (restartAfterStop) {
@@ -648,6 +682,10 @@ function startRuntime() {
   runtimeState.status = 'starting'
   runtimeState.logs = []
   runtimeState.chatLogs = []
+  runtimeState.health = updateHealthState(runtimeState.health, {
+    reason: 'mining-ok',
+    lastRecoveryAction: 'runtime starting'
+  }, Date.now())
   stdoutBuffer = ''
   stderrBuffer = ''
   publishRuntimeState()
@@ -706,6 +744,38 @@ function restartRuntime() {
 
   restartAfterStop = true
   return stopRuntime()
+}
+
+function checkRuntimeStaleness() {
+  if (isQuitting || !runtimeChild) return
+  const now = Date.now()
+  if (now - lastRuntimeStaleRestartAt < RUNTIME_STALE_RESTART_COOLDOWN_MS) return
+
+  const decision = getRuntimeRecoveryDecision({
+    now,
+    running: runtimeState.status === 'running' || runtimeState.status === 'starting',
+    desired: true,
+    lastEventAt: runtimeState.lastEventAt || runtimeState.startedAt,
+    staleAfterMs: RUNTIME_STALE_AFTER_MS
+  })
+
+  if (decision.action !== 'restart-runtime') return
+
+  lastRuntimeStaleRestartAt = now
+  setRuntimeHealth('runtime-stale', {
+    lastRecoveryAction: 'desktop watchdog restart',
+    diagnosis: `Runtime молчит ${Math.round((decision.staleForMs || 0) / 1000)}с, приложение перезапускает backend.`
+  })
+  pushLog({
+    level: 'warning',
+    botName: 'SYSTEM',
+    message: `BOT STALE: runtime молчит ${Math.round((decision.staleForMs || 0) / 1000)}с -> перезапуск`,
+    rawMessage: `BOT STALE: runtime молчит ${Math.round((decision.staleForMs || 0) / 1000)}с -> перезапуск`,
+    time: new Date().toLocaleTimeString('ru-RU'),
+    timestamp: new Date().toISOString()
+  })
+  publishRuntimeState()
+  restartRuntime()
 }
 
 function scheduleAutoStartRuntime(desktopSettings) {
@@ -900,6 +970,7 @@ app.whenReady().then(() => {
   registerIpcHandlers()
   createWindow()
   scheduleAutoStartRuntime(readDesktopSettings())
+  setInterval(checkRuntimeStaleness, RUNTIME_STALE_CHECK_MS)
 })
 
 app.on('before-quit', () => {
