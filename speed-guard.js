@@ -1,6 +1,8 @@
 function createSpeedGuardProfile() {
   return {
     peakRatePerMinute: 0,
+    stickyPeakRatePerMinute: 0,
+    stickyPeakAt: 0,
     averageProgressIntervalMs: 0,
     lastProgressAt: 0,
     rateSamples: []
@@ -14,6 +16,8 @@ function normalizeProfile(profile) {
 
   if (!Array.isArray(target.rateSamples)) target.rateSamples = []
   if (!Number.isFinite(Number(target.peakRatePerMinute))) target.peakRatePerMinute = 0
+  if (!Number.isFinite(Number(target.stickyPeakRatePerMinute))) target.stickyPeakRatePerMinute = 0
+  if (!Number.isFinite(Number(target.stickyPeakAt))) target.stickyPeakAt = 0
   if (!Number.isFinite(Number(target.averageProgressIntervalMs))) target.averageProgressIntervalMs = 0
   if (!Number.isFinite(Number(target.lastProgressAt))) target.lastProgressAt = 0
 
@@ -58,24 +62,47 @@ function pruneRateSamples(profile, now, memoryMs) {
     Number.isFinite(Number(sample.at)) &&
     Number(sample.at) >= cutoff
   ))
-  target.peakRatePerMinute = getRobustPeakRate(target.rateSamples)
+  target.peakRatePerMinute = Math.max(target.peakRatePerMinute || 0, getRobustPeakRate(target.rateSamples))
   return target
 }
 
-function rememberSpeedGuardPeak(profile, ratePerMinute, now = Date.now(), memoryMs = 120000) {
+function rememberSpeedGuardPeak(profile, ratePerMinute, now = Date.now(), memoryMs = 120000, options = {}) {
   const target = normalizeProfile(profile)
   const rate = Number(ratePerMinute)
   const timestamp = Number(now)
+  const sampleMemoryMs = Math.max(1000, Number(memoryMs) || 1000)
+  const stickyPeakMemoryMs = Math.max(
+    sampleMemoryMs,
+    Number(options.stickyPeakMemoryMs ?? options.stickyMemoryMs ?? (30 * 60 * 1000)) || (30 * 60 * 1000)
+  )
 
   if (Number.isFinite(timestamp)) {
-    pruneRateSamples(target, timestamp, memoryMs)
+    pruneRateSamples(target, timestamp, sampleMemoryMs)
   }
 
   if (Number.isFinite(rate) && rate > 0) {
     target.rateSamples.push({ at: Number.isFinite(timestamp) ? timestamp : Date.now(), ratePerMinute: rate })
-    pruneRateSamples(target, Number.isFinite(timestamp) ? timestamp : Date.now(), memoryMs)
+    pruneRateSamples(target, Number.isFinite(timestamp) ? timestamp : Date.now(), sampleMemoryMs)
   }
 
+  const effectiveNow = Number.isFinite(timestamp) ? timestamp : Date.now()
+  const robustRecentPeak = getRobustPeakRate(target.rateSamples)
+  if (robustRecentPeak > target.stickyPeakRatePerMinute) {
+    target.stickyPeakRatePerMinute = robustRecentPeak
+    target.stickyPeakAt = effectiveNow
+  }
+
+  if (
+    target.stickyPeakRatePerMinute > 0 &&
+    target.stickyPeakAt > 0 &&
+    effectiveNow - target.stickyPeakAt > stickyPeakMemoryMs &&
+    robustRecentPeak > 0
+  ) {
+    target.stickyPeakRatePerMinute = robustRecentPeak
+    target.stickyPeakAt = effectiveNow
+  }
+
+  target.peakRatePerMinute = Math.max(robustRecentPeak, target.stickyPeakRatePerMinute || 0)
   return target.peakRatePerMinute
 }
 

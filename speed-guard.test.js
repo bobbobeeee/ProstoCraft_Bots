@@ -20,10 +20,24 @@ const {
 
 {
   const profile = createSpeedGuardProfile()
-  assert.strictEqual(rememberSpeedGuardPeak(profile, 100, 1000, 10000), 100)
-  assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 5000, 10000), 100)
-  assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 12000, 10000), 50)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 100, 1000, 10000, { stickyPeakMemoryMs: 10000 }), 100)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 5000, 10000, { stickyPeakMemoryMs: 10000 }), 100)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 50, 12000, 10000, { stickyPeakMemoryMs: 10000 }), 50)
   assert.strictEqual(getSpeedGuardTargetRate(profile, 0.9), 45)
+}
+
+{
+  const profile = createSpeedGuardProfile()
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 750, 1000, 10000, { stickyPeakMemoryMs: 600000 }), 750)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 580, 20000, 10000, { stickyPeakMemoryMs: 600000 }), 750)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 580, 120000, 10000, { stickyPeakMemoryMs: 600000 }), 750)
+  assert.strictEqual(getSpeedGuardTargetRate(profile, 0.95), 712.5)
+}
+
+{
+  const profile = createSpeedGuardProfile()
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 750, 1000, 10000, { stickyPeakMemoryMs: 60000 }), 750)
+  assert.strictEqual(rememberSpeedGuardPeak(profile, 580, 90000, 10000, { stickyPeakMemoryMs: 60000 }), 580)
 }
 
 {

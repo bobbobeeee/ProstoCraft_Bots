@@ -635,6 +635,10 @@ const SPEED_GUARD_RATE_WINDOW_MS = Math.max(SPEED_WINDOW_MS, Number(config.timin
 const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
 const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
 const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(1, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
+const SPEED_GUARD_PEAK_MEMORY_MS = Math.max(
+  5 * 60 * 1000,
+  Number(config.timing?.speedGuardPeakMemoryMs ?? 2 * 60 * 60 * 1000) || (2 * 60 * 60 * 1000)
+)
 const HEADLESS_MODE = process.argv.includes('--headless') ||
   process.env.BOT_HEADLESS === '1' ||
   !process.stdout.isTTY ||
@@ -1349,6 +1353,7 @@ function applyDiggingPauseState(source = 'manual') {
   const nextPaused = manualPauseRequested || filePauseRequested
   if (nextPaused === diggingPaused) return
 
+  const now = Date.now()
   diggingPaused = nextPaused
   const status = diggingPaused ? 'ПРИОСТАНОВЛЕНО' : 'ВОЗОБНОВЛЕНО'
   addLog('info', 'SYSTEM', `Копание ${status} (${source})`)
@@ -1356,6 +1361,18 @@ function applyDiggingPauseState(source = 'manual') {
   for (const botData of Object.values(monitorData.bots)) {
     if (botData.status === 'копает' || botData.status === 'пауза') {
       botData.status = diggingPaused ? 'пауза' : 'копает'
+      botData.rateActiveSince = diggingPaused ? 0 : now
+      botData.rateStatusChangedAt = now
+      botData.effectiveBlocksLastMinute = 0
+      botData.effectiveBlocksPerSecond = 0
+      botData.blocksLastMinute = 0
+      botData.blocksPerSecond = 0
+    }
+  }
+
+  for (const botObj of activeBots) {
+    if (typeof botObj.resetSpeedGuardGrace === 'function') {
+      botObj.resetSpeedGuardGrace(source)
     }
   }
 
@@ -1946,7 +1963,9 @@ function createBot(cfg) {
   }
 
   function rememberSpeedGuardPeak(ratePerMinute) {
-    return rememberAdaptiveSpeedGuardPeak(speedGuardProfile, ratePerMinute, Date.now(), getSpeedGuardRateMemoryMs())
+    return rememberAdaptiveSpeedGuardPeak(speedGuardProfile, ratePerMinute, Date.now(), getSpeedGuardRateMemoryMs(), {
+      stickyPeakMemoryMs: SPEED_GUARD_PEAK_MEMORY_MS
+    })
   }
 
   function getSpeedGuardTarget() {
@@ -1985,6 +2004,18 @@ function createBot(cfg) {
     speedGuardStartedAt = 0
     speedGuardLowSince = 0
     speedGuardRecoveries = 0
+  }
+
+  function resetSpeedGuardGrace(reason = 'external-hold') {
+    speedGuardStartedAt = Date.now()
+    speedGuardLowSince = 0
+    speedGuardRecoveries = 0
+    speedGuardLastRecoveryAt = 0
+    speedGuardCheckRunning = false
+    diagEvent('speed-guard-grace-reset', {
+      reason,
+      startGraceMs: SPEED_GUARD_START_GRACE_MS
+    })
   }
 
   async function recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot) {
@@ -5835,6 +5866,7 @@ function createBot(cfg) {
     get isBotFilterBusy() { return isBotFilterBusy() },
     getLifecycleSnapshot,
     get reconnectDueAt() { return reconnectDueAt },
+    resetSpeedGuardGrace,
     set isRotating(val) { isRotating = val },
     cleanup: () => {
       disposeBotInstance()

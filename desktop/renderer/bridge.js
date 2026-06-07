@@ -85,6 +85,7 @@
           "speedGuardButtonIdleMs": 12000,
           "speedGuardNoProgressReconnectMs": 20000,
           "speedGuardReconnectAfterRecoveries": 2,
+          "speedGuardPeakMemoryMs": 7200000,
           "stuckRecoveryMs": 60000,
           "speedGuardAllowedDropPercent": 10
       },
