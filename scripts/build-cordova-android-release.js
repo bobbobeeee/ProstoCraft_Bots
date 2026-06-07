@@ -17,6 +17,7 @@ const gradleUserHome = path.join(projectRoot, '.gradle-home')
 const defaultAndroidSdkRoot = path.join(projectRoot, 'tools', 'android-sdk')
 const defaultOutputDir = path.join(projectRoot, 'dist-android')
 const appVersion = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version || '0.0.0'
+const androidVersionCode = toAndroidVersionCode(appVersion)
 const defaultOutputApk = path.join(defaultOutputDir, `ProstoCraft.Bot.Studio-Mobile-${appVersion}.apk`)
 const releaseKeystore = path.join(projectRoot, 'android-signing', 'prostocraft-release.keystore')
 const cordovaBuildJson = path.join(cordovaRoot, 'build.json')
@@ -159,6 +160,46 @@ function cleanOutputApks() {
 
 function toAndroidPath(targetPath) {
   return targetPath.replace(/\\/g, '/')
+}
+
+function toAndroidVersionCode(version) {
+  const match = String(version || '').match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return 1
+
+  const major = Number(match[1]) || 0
+  const minor = Number(match[2]) || 0
+  const patch = Number(match[3]) || 0
+  return Math.max(1, major * 10000 + minor * 100 + patch)
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function setRootXmlAttribute(xml, tagName, attributeName, attributeValue) {
+  const tagPattern = new RegExp(`(<${escapeRegex(tagName)}\\b[^>]*)(>)`, 'i')
+  const attributePattern = new RegExp(`\\s${escapeRegex(attributeName)}=["'][^"']*["']`, 'i')
+  const nextAttribute = ` ${attributeName}="${attributeValue}"`
+
+  return xml.replace(tagPattern, (match, start, end) => {
+    if (attributePattern.test(start)) {
+      return `${start.replace(attributePattern, nextAttribute)}${end}`
+    }
+
+    return `${start}${nextAttribute}${end}`
+  })
+}
+
+function ensureCordovaConfigVersion(configXml) {
+  let nextConfig = setRootXmlAttribute(configXml, 'widget', 'version', appVersion)
+  nextConfig = setRootXmlAttribute(nextConfig, 'widget', 'android-versionCode', String(androidVersionCode))
+  return nextConfig
+}
+
+function ensureAndroidManifestVersion(manifestXml) {
+  let nextManifest = setRootXmlAttribute(manifestXml, 'manifest', 'android:versionName', appVersion)
+  nextManifest = setRootXmlAttribute(nextManifest, 'manifest', 'android:versionCode', String(androidVersionCode))
+  return nextManifest
 }
 
 function syncSigningConfigPaths() {
@@ -320,9 +361,9 @@ function ensureCordovaAndroidResources() {
   writeFileIfChanged(
     path.join(resRoot, 'xml', 'config.xml'),
     fs.existsSync(cordovaConfigXml)
-      ? ensureNodeJsFeature(fs.readFileSync(cordovaConfigXml, 'utf8'))
+      ? ensureCordovaConfigVersion(ensureNodeJsFeature(fs.readFileSync(cordovaConfigXml, 'utf8')))
       : `<?xml version="1.0" encoding="utf-8"?>
-<widget id="com.prostocraft.botstudio.mobile" version="${appVersion}" xmlns="http://www.w3.org/ns/widgets">
+<widget id="com.prostocraft.botstudio.mobile" version="${appVersion}" android-versionCode="${androidVersionCode}" xmlns="http://www.w3.org/ns/widgets">
   <name>ProstoCraft Bot Studio Mobile</name>
   <content src="index.html" />
   <feature name="NodeJS">
@@ -349,6 +390,7 @@ function ensureCordovaAndroidManifest() {
   if (!fs.existsSync(manifestPath)) return
 
   let manifestXml = fs.readFileSync(manifestPath, 'utf8')
+  manifestXml = ensureAndroidManifestVersion(manifestXml)
   manifestXml = ensureAndroidManifestPermission(manifestXml, 'REQUEST_INSTALL_PACKAGES')
   writeFileIfChanged(manifestPath, manifestXml)
 }
@@ -374,6 +416,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.os.Build;
@@ -383,6 +427,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.FileProvider;
 
 import java.io.File;
+import java.util.List;
 
 public class RuntimeKeepAliveService extends Service {
     public static final String ACTION_START = "com.prostocraft.botstudio.mobile.action.START_RUNTIME_SERVICE";
@@ -644,10 +689,38 @@ public class RuntimeKeepAliveService extends Service {
                 getPackageName() + ".cdv.core.file.provider",
                 apkFile
             );
-            Intent installIntent = new Intent(Intent.ACTION_VIEW);
-            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            Intent installIntent = createApkInstallIntent(apkUri);
+            grantPackageInstallerReadAccess(installIntent, apkUri);
             startActivity(installIntent);
+        } catch (Throwable ignored) {}
+    }
+
+    private Intent createApkInstallIntent(Uri apkUri) {
+        Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+        installIntent.setData(apkUri);
+        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, false);
+        return installIntent;
+    }
+
+    private void grantPackageInstallerReadAccess(Intent installIntent, Uri apkUri) {
+        try {
+            List<ResolveInfo> installers = getPackageManager().queryIntentActivities(
+                installIntent,
+                PackageManager.MATCH_DEFAULT_ONLY
+            );
+
+            for (ResolveInfo installer : installers) {
+                if (installer.activityInfo == null || installer.activityInfo.packageName == null) {
+                    continue;
+                }
+
+                grantUriPermission(
+                    installer.activityInfo.packageName,
+                    apkUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                );
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -743,7 +816,10 @@ function patchNodeJsMobilePlugin() {
   let source = fs.readFileSync(nodeJsPath, 'utf8')
   source = ensureJavaImport(source, 'import android.net.Uri;')
   source = ensureJavaImport(source, 'import android.provider.Settings;')
+  source = ensureJavaImport(source, 'import android.content.pm.PackageManager;')
+  source = ensureJavaImport(source, 'import android.content.pm.ResolveInfo;')
   source = ensureJavaImport(source, 'import androidx.core.content.FileProvider;')
+  source = ensureJavaImport(source, 'import java.util.List;')
 
   const oldMessageBlock = `    if (msg.startsWith("runtime-keepalive|")) {
       setRuntimeKeepAlive(msg.endsWith("|1"));
@@ -848,9 +924,8 @@ function patchNodeJsMobilePlugin() {
         context.getPackageName() + ".cdv.core.file.provider",
         apkFile
       );
-      Intent intent = new Intent(Intent.ACTION_VIEW);
-      intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+      Intent intent = createApkInstallIntent(apkUri);
+      grantPackageInstallerReadAccess(intent, apkUri);
       activity.startActivity(intent);
     } catch (Throwable throwable) {
       Log.w(LOGTAG, "Unable to open APK installer", throwable);
@@ -893,6 +968,62 @@ function patchNodeJsMobilePlugin() {
     source = source.replace(
       /(\s+private static synchronized void setRuntimeKeepAlive\(boolean enabled\) \{)/,
       `${installMethods}$1`
+    )
+  }
+
+  const oldInstallIntentBlock = `      Intent intent = new Intent(Intent.ACTION_VIEW);
+      intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+      activity.startActivity(intent);
+`
+  const newInstallIntentBlock = `      Intent intent = createApkInstallIntent(apkUri);
+      grantPackageInstallerReadAccess(intent, apkUri);
+      activity.startActivity(intent);
+`
+
+  if (source.includes(oldInstallIntentBlock)) {
+    source = source.replace(oldInstallIntentBlock, newInstallIntentBlock)
+  }
+
+  if (!source.includes('private static Intent createApkInstallIntent')) {
+    const installIntentMethods = `
+  private static Intent createApkInstallIntent(Uri apkUri) {
+    Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+    intent.setData(apkUri);
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+    intent.putExtra(Intent.EXTRA_RETURN_RESULT, false);
+    return intent;
+  }
+
+  private static void grantPackageInstallerReadAccess(Intent intent, Uri apkUri) {
+    try {
+      if (context == null) return;
+
+      List<ResolveInfo> installers = context.getPackageManager().queryIntentActivities(
+        intent,
+        PackageManager.MATCH_DEFAULT_ONLY
+      );
+
+      for (ResolveInfo installer : installers) {
+        if (installer.activityInfo == null || installer.activityInfo.packageName == null) {
+          continue;
+        }
+
+        context.grantUriPermission(
+          installer.activityInfo.packageName,
+          apkUri,
+          Intent.FLAG_GRANT_READ_URI_PERMISSION
+        );
+      }
+    } catch (Throwable throwable) {
+      Log.w(LOGTAG, "Unable to grant APK read permission", throwable);
+    }
+  }
+
+`
+    source = source.replace(
+      /(\s+private static void installDownloadedApk\(String apkPath\) \{)/,
+      `${installIntentMethods}$1`
     )
   }
 

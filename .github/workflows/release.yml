@@ -64,6 +64,39 @@ jobs:
           npm run android:sync
           npm run cordova:sync
 
+      - name: Restore Android signing key
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if (-not $env:ANDROID_KEYSTORE_BASE64 -or -not $env:ANDROID_KEYSTORE_PASSWORD -or -not $env:ANDROID_KEY_ALIAS -or -not $env:ANDROID_KEY_PASSWORD) {
+            throw "Android signing secrets are missing. Set ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD."
+          }
+
+          New-Item -ItemType Directory -Force -Path android-signing | Out-Null
+          [IO.File]::WriteAllBytes(
+            "android-signing/prostocraft-release.keystore",
+            [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64)
+          )
+
+          $keystorePath = (Resolve-Path "android-signing/prostocraft-release.keystore").Path.Replace('\', '/')
+          $buildConfig = @{
+            android = @{
+              release = @{
+                keystore = $keystorePath
+                storePassword = $env:ANDROID_KEYSTORE_PASSWORD
+                alias = $env:ANDROID_KEY_ALIAS
+                password = $env:ANDROID_KEY_PASSWORD
+                keystoreType = ""
+              }
+            }
+          }
+
+          $buildConfig | ConvertTo-Json -Depth 8 | Set-Content -Path mobile-cordova/build.json -Encoding utf8
+
       - name: Test
         run: npm test
 
