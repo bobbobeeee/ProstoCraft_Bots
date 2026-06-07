@@ -19,10 +19,8 @@
         <nav class="nav-list" aria-label="Основная навигация">
           <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
           <button class="nav-item" data-tab="bots">Боты</button>
-          <button class="nav-item" data-tab="settings">Настройки</button>
-          <button class="nav-item" data-tab="updates">Обновления</button>
           <button class="nav-item" data-tab="logs">Логи</button>
-          <button class="nav-item" data-tab="chat">Чат</button>
+          <button class="nav-item" data-tab="more">Ещё</button>
         </nav>
 
         <div class="sidebar-card">
@@ -55,19 +53,11 @@
 
         <section id="mobile-overview" class="mobile-overview" aria-live="polite"></section>
 
-        <section id="dashboard-hero" class="hero-grid">
-          <article class="hero-card hero-card--accent">
-            <div>
-              <p class="eyebrow">Основной контроль</p>
-              <h3 id="hero-title">Пульт готов к настройке</h3>
-            </div>
-            <p id="hero-copy" class="muted-copy">
-              Добавляйте ботов, задавайте координаты блоков и запускайте весь пул одним нажатием.
-            </p>
-          </article>
-
-          <div id="summary-cards" class="summary-grid"></div>
+        <section id="dashboard-hero" class="compact-status-strip">
+          <div id="summary-cards" class="summary-grid summary-grid--compact"></div>
         </section>
+
+        <section id="context-switcher" class="context-switcher no-drag" hidden></section>
 
         <section class="panel-stack">
           <section id="dashboard-panel" class="panel tab-panel is-active" data-panel="dashboard">
@@ -124,30 +114,11 @@
             <div class="panel-header panel-header--spread">
               <div>
                 <p class="eyebrow">Log stream</p>
-                <h3>Логи и пути</h3>
+                <h3>Логи runtime</h3>
               </div>
               <div class="inline-actions">
                 <span id="log-counter" class="chip">0 записей</span>
               </div>
-            </div>
-
-            <div class="path-grid">
-              <article class="path-card">
-                <span>Конфиг</span>
-                <code id="config-path-label">-</code>
-              </article>
-              <article class="path-card">
-                <span>Лог</span>
-                <code id="log-path-label">-</code>
-              </article>
-              <article class="path-card">
-                <span>Чат</span>
-                <code id="chat-log-path-label">-</code>
-              </article>
-              <article class="path-card">
-                <span>Данные приложения</span>
-                <code id="runtime-path-label">-</code>
-              </article>
             </div>
 
             <div id="log-stream" class="log-stream"></div>
@@ -183,6 +154,45 @@
 
             <div id="chat-log-stream" class="log-stream"></div>
           </section>
+
+          <section id="files-panel" class="panel tab-panel" data-panel="files">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Files</p>
+                <h3>Файлы runtime</h3>
+              </div>
+            </div>
+
+            <div class="path-grid">
+              <article class="path-card">
+                <span>Конфиг</span>
+                <code id="config-path-label">-</code>
+              </article>
+              <article class="path-card">
+                <span>Лог</span>
+                <code id="log-path-label">-</code>
+              </article>
+              <article class="path-card">
+                <span>Чат</span>
+                <code id="chat-log-path-label">-</code>
+              </article>
+              <article class="path-card">
+                <span>Данные приложения</span>
+                <code id="runtime-path-label">-</code>
+              </article>
+            </div>
+          </section>
+
+          <section id="about-panel" class="panel tab-panel" data-panel="about">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">About</p>
+                <h3>О приложении</h3>
+              </div>
+            </div>
+
+            <div id="about-content" class="about-grid"></div>
+          </section>
         </section>
       </main>
 
@@ -191,10 +201,8 @@
       <nav class="mobile-nav no-drag" aria-label="Быстрая навигация">
         <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
         <button class="nav-item" data-tab="bots">Боты</button>
-        <button class="nav-item" data-tab="settings">Настр.</button>
-        <button class="nav-item" data-tab="updates">Обнов.</button>
         <button class="nav-item" data-tab="logs">Логи</button>
-        <button class="nav-item" data-tab="chat">Чат</button>
+        <button class="nav-item" data-tab="more">Ещё</button>
       </nav>
     </div>
 

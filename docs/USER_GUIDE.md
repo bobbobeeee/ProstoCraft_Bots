@@ -12,16 +12,16 @@ https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest
 
 Скачай один из файлов:
 
-- `ProstoCraft.Bot.Studio-Setup-2.0.2.exe` - установщик для Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.0.2.apk` - APK для Android.
+- `ProstoCraft.Bot.Studio-Setup-2.0.3.exe` - установщик для Windows.
+- `ProstoCraft.Bot.Studio-Mobile-2.0.3.apk` - APK для Android.
 
 ## Первый запуск
 
 1. Запусти приложение.
-2. Открой раздел настроек.
+2. Открой `Ещё` -> `Настройки`.
 3. Укажи ник, сервер и рабочие координаты.
 4. Проверь координату кнопки генератора.
-5. Нажми запуск бота.
+5. Нажми запуск на вкладке `Пульт`.
 
 ## Режим отладки
 

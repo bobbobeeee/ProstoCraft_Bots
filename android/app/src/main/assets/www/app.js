@@ -544,6 +544,18 @@ const EXTRA_SETTINGS_SECTIONS = [
   }
 ]
 
+const TOP_LEVEL_TABS = new Set(['dashboard', 'bots', 'logs', 'more'])
+const LOG_VIEW_LABELS = {
+  events: 'События',
+  chat: 'Чат'
+}
+const MORE_VIEW_LABELS = {
+  settings: 'Настройки',
+  updates: 'Обновления',
+  files: 'Файлы',
+  about: 'О приложении'
+}
+
 const state = {
   config: null,
   desktopSettings: createDefaultDesktopSettings(),
@@ -561,6 +573,8 @@ const state = {
   updateSource: null,
   updates: createEmptyUpdateState(),
   activeTab: 'dashboard',
+  activeLogView: 'events',
+  activeMoreView: 'settings',
   selectedBotIndex: 0,
   isDirty: false,
   coordinateModalOpen: false,
@@ -712,6 +726,7 @@ function flushRenderQueue() {
   if (nextParts.has('logs')) renderLogs()
   if (nextParts.has('updates')) renderUpdates()
   if (nextParts.has('chat')) renderChatLogs()
+  if (nextParts.has('about')) renderAbout()
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -1010,10 +1025,14 @@ function getActiveTabTitle() {
     return selectedBot ? `Бот: ${selectedBot.username}` : 'Боты и маршруты'
   }
 
-  if (state.activeTab === 'settings') return 'Настройки runtime'
-  if (state.activeTab === 'updates') return 'Центр обновления'
-  if (state.activeTab === 'logs') return 'Логи runtime'
-  if (state.activeTab === 'chat') return 'Чат сервера'
+  if (state.activeTab === 'logs') {
+    return state.activeLogView === 'chat' ? 'Чат сервера' : 'Логи runtime'
+  }
+
+  if (state.activeTab === 'more') {
+    return MORE_VIEW_LABELS[state.activeMoreView] || 'Ещё'
+  }
+
   return 'Пульт добычи'
 }
 
@@ -1027,15 +1046,17 @@ function buildTopbarSubtitle({ configuredBots, activeBots, runtimeTotalBots, isR
     return `Профиль ${selectedBot.username}: ${selectedBot.blocksToMine.length} точек, стенд ${selectedBot.standPosition.x}/${selectedBot.standPosition.y}/${selectedBot.standPosition.z}, радиус ${formatNumber(selectedBot.maxDistanceFromStand, 2)} м.`
   }
 
-  if (state.activeTab === 'settings') {
-    return 'Здесь собраны сервер, тайминги, восстановление после зависаний, меню и флаги поведения всех ботов.'
-  }
-
   if (state.activeTab === 'logs') {
-    return `Последние сообщения runtime. Сейчас в буфере ${formatNumber((state.runtime.logs || []).length)} записей.`
+    return state.activeLogView === 'chat'
+      ? `Сообщения сервера и чата: ${formatNumber((state.runtime.chatLogs || []).length)} записей.`
+      : `Последние события runtime: ${formatNumber((state.runtime.logs || []).length)} записей.`
   }
 
-  if (state.activeTab === 'updates') {
+  if (state.activeTab === 'more' && state.activeMoreView === 'settings') {
+    return 'Базовые настройки запуска, слотов, ротации, speed guard и отладки.'
+  }
+
+  if (state.activeTab === 'more' && state.activeMoreView === 'updates') {
     if (state.updates.status === 'available') {
       return `Доступна версия ${state.updates.latestVersion}. Скачивание и установка запускаются только вручную.`
     }
@@ -1047,8 +1068,12 @@ function buildTopbarSubtitle({ configuredBots, activeBots, runtimeTotalBots, isR
     return 'Приложение проверяет обновления на GitHub и показывает установку только по вашему нажатию.'
   }
 
-  if (state.activeTab === 'chat') {
-    return `Отдельный поток сообщений сервера и чата. Сейчас в буфере ${formatNumber((state.runtime.chatLogs || []).length)} записей.`
+  if (state.activeTab === 'more' && state.activeMoreView === 'files') {
+    return 'Пути к config.json, runtime-логу, chat.log и папке данных.'
+  }
+
+  if (state.activeTab === 'more' && state.activeMoreView === 'about') {
+    return `Версия приложения: ${state.appVersion}.`
   }
 
   if (supportsRuntimeControl && isRunning) {
@@ -1211,20 +1236,77 @@ function parsePrimitiveValue(kind, rawValue) {
 
 
 
+function getActivePanelName() {
+  if (state.activeTab === 'logs') {
+    return state.activeLogView === 'chat' ? 'chat' : 'logs'
+  }
+
+  if (state.activeTab === 'more') {
+    return state.activeMoreView || 'settings'
+  }
+
+  return state.activeTab
+}
+
+function getTopLevelTabForRequest(tabName) {
+  if (TOP_LEVEL_TABS.has(tabName)) return tabName
+  if (tabName === 'chat') return 'logs'
+  if (['settings', 'updates', 'files', 'about'].includes(tabName)) return 'more'
+  return 'dashboard'
+}
+
+function renderContextSwitcher() {
+  if (!elements.contextSwitcher) return
+
+  if (state.activeTab === 'logs') {
+    const logCount = (state.runtime.logs || []).length
+    const chatCount = (state.runtime.chatLogs || []).length
+    elements.contextSwitcher.hidden = false
+    elements.contextSwitcher.innerHTML = `
+      <button class="context-tab ${state.activeLogView === 'events' ? 'is-active' : ''}" type="button" data-log-view="events">
+        ${escapeHtml(LOG_VIEW_LABELS.events)} <span>${formatNumber(logCount)}</span>
+      </button>
+      <button class="context-tab ${state.activeLogView === 'chat' ? 'is-active' : ''}" type="button" data-log-view="chat">
+        ${escapeHtml(LOG_VIEW_LABELS.chat)} <span>${formatNumber(chatCount)}</span>
+      </button>
+    `
+    return
+  }
+
+  if (state.activeTab === 'more') {
+    elements.contextSwitcher.hidden = false
+    elements.contextSwitcher.innerHTML = Object.entries(MORE_VIEW_LABELS).map(([view, label]) => `
+      <button class="context-tab ${state.activeMoreView === view ? 'is-active' : ''}" type="button" data-more-view="${escapeAttribute(view)}">
+        ${escapeHtml(label)}
+      </button>
+    `).join('')
+    return
+  }
+
+  elements.contextSwitcher.hidden = true
+  elements.contextSwitcher.innerHTML = ''
+}
+
 function renderTabs() {
-  const isDashboard = state.activeTab === 'dashboard'
-  elements.workspace.classList.toggle('workspace--dashboard', isDashboard)
-  ;['bots', 'settings', 'updates', 'logs', 'chat'].forEach(tabName => {
-    elements.workspace.classList.toggle(`workspace--${tabName}`, state.activeTab === tabName)
+  const topLevelTab = getTopLevelTabForRequest(state.activeTab)
+  const activePanelName = getActivePanelName()
+
+  state.activeTab = topLevelTab
+  elements.workspace.classList.toggle('workspace--dashboard', topLevelTab === 'dashboard')
+  ;['bots', 'logs', 'more', 'settings', 'updates', 'files', 'about', 'chat'].forEach(tabName => {
+    const isActive = tabName === topLevelTab || tabName === activePanelName
+    elements.workspace.classList.toggle(`workspace--${tabName}`, isActive)
   })
 
   document.querySelectorAll('.nav-item').forEach(button => {
-    button.classList.toggle('is-active', button.dataset.tab === state.activeTab)
+    button.classList.toggle('is-active', button.dataset.tab === topLevelTab)
   })
 
   document.querySelectorAll('.tab-panel').forEach(panel => {
-    panel.classList.toggle('is-active', panel.dataset.panel === state.activeTab)
+    panel.classList.toggle('is-active', panel.dataset.panel === activePanelName)
   })
+
+  renderContextSwitcher()
 }
 
 
@@ -1309,6 +1391,7 @@ function renderAll() {
   renderUpdates()
   renderLogs()
   renderChatLogs()
+  renderAbout()
 }
 
 function cacheElements() {
@@ -1320,9 +1403,8 @@ function cacheElements() {
   elements.sidebarStatusPill = document.getElementById('sidebar-status-pill')
   elements.sidebarStatusCopy = document.getElementById('sidebar-status-copy')
   elements.topbarSubtitle = document.getElementById('topbar-subtitle')
-  elements.heroTitle = document.getElementById('hero-title')
-  elements.heroCopy = document.getElementById('hero-copy')
   elements.summaryCards = document.getElementById('summary-cards')
+  elements.contextSwitcher = document.getElementById('context-switcher')
   elements.mobileOverview = document.getElementById('mobile-overview')
   elements.mobileActionBar = document.getElementById('mobile-action-bar')
   elements.startStopButton = document.getElementById('start-stop-btn')
@@ -1346,6 +1428,7 @@ function cacheElements() {
   elements.downloadUpdateButton = document.getElementById('download-update-btn')
   elements.installUpdateButton = document.getElementById('install-update-btn')
   elements.openReleaseButton = document.getElementById('open-release-btn')
+  elements.aboutContent = document.getElementById('about-content')
   elements.configPathLabel = document.getElementById('config-path-label')
   elements.logPathLabel = document.getElementById('log-path-label')
   elements.chatLogPathLabel = document.getElementById('chat-log-path-label')
@@ -1410,9 +1493,9 @@ async function bootstrap() {
     } else if (state.activeTab === 'bots') {
       runtimeParts.push('botList', 'botEditor')
     } else if (state.activeTab === 'logs') {
-      runtimeParts.push('logs')
-    } else if (state.activeTab === 'chat') {
-      runtimeParts.push('chat')
+      runtimeParts.push(state.activeLogView === 'chat' ? 'chat' : 'logs')
+    } else if (state.activeTab === 'more' && state.activeMoreView === 'about') {
+      runtimeParts.push('about')
     }
 
     queueRender(runtimeParts)
@@ -1428,7 +1511,7 @@ async function bootstrap() {
       currentVersion: state.appVersion,
       ...(nextUpdates || {})
     }
-    queueRender('updates', 'chrome')
+    queueRender(state.activeTab === 'more' && state.activeMoreView === 'updates' ? 'updates' : null, 'chrome', 'about')
   })
 
   renderAll()
@@ -1665,7 +1748,6 @@ function renderChrome() {
   const runtimeStatus = formatStatus(state.runtime.status)
   const configuredBots = getBots().length
   const snapshot = state.runtime.snapshot || {}
-  const resources = state.runtime.resources || {}
   const health = getRuntimeHealth(snapshot)
   const runtimeTotalBots = snapshot.totalBots || configuredBots
   const activeBots = snapshot.activeBots || 0
@@ -1716,18 +1798,6 @@ function renderChrome() {
       ? `Конфиг готов к запуску. Ботов в профиле: ${configuredBots}.`
       : `Мобильная сборка готова к редактированию. Ботов в профиле: ${configuredBots}.`
 
-  elements.heroTitle.textContent = supportsRuntimeControl
-    ? (isRunning ? 'Пул ботов сейчас работает' : 'Пул готов к запуску')
-    : 'Мобильная конфигурация готова'
-
-  elements.heroCopy.textContent = supportsRuntimeControl
-    ? (
-      isRunning
-        ? `Активных ботов: ${activeBots}/${runtimeTotalBots}. Runtime уже собирает живую статистику по добыче, темпу и ресурсам процесса.`
-        : 'Сохраните конфиг и запустите backend. После старта здесь появятся живые показатели по каждому боту и общая сводка.'
-    )
-    : 'Экран оптимизирован под Android и маленькие дисплеи: конфиг, маршруты и логи доступны локально, а тяжелый desktop-runtime в APK не встраивается.'
-
   elements.topbarSubtitle.textContent = state.isDirty
     ? 'Сначала сохраните изменения, затем продолжайте работу с runtime.'
     : buildTopbarSubtitle({
@@ -1738,28 +1808,11 @@ function renderChrome() {
       supportsRuntimeControl
     })
 
-  elements.heroTitle.textContent = supportsRuntimeControl
-    ? (isRunning ? 'Пул ботов сейчас работает' : 'Пул готов к запуску')
-    : 'Мобильная конфигурация готова'
-
-  elements.heroCopy.textContent = supportsRuntimeControl
-    ? (
-      isRunning
-        ? `Активных ботов: ${activeBots}/${runtimeTotalBots}. Runtime уже собирает живую статистику по добыче, темпу и ресурсам процесса.`
-        : 'Сохраните конфиг и запустите runtime. После старта здесь появятся живые показатели по каждому боту и общая сводка.'
-    )
-    : 'Экран оптимизирован под Android и небольшие дисплеи: конфиг, маршруты и логи доступны локально без тяжёлых фоновых задач.'
-
   elements.summaryCards.innerHTML = [
     createSummaryCard(
-      'Ботов в конфиге',
-      formatNumber(configuredBots),
-      `${formatNumber(activeBots)} активных прямо сейчас`
-    ),
-    createSummaryCard(
-      'Всего добыто блоков',
-      formatNumber(snapshot.totalBlocks || 0),
-      `Аптайм runtime: ${formatDuration(snapshot.uptimeMs || 0)}`
+      'Runtime',
+      escapeHtml(runtimeStatus.label),
+      `${formatNumber(activeBots)}/${formatNumber(runtimeTotalBots)} активных · ${formatNumber(configuredBots)} в конфиге`
     ),
     createSummaryCard(
       'Текущий темп добычи',
@@ -1767,14 +1820,14 @@ function renderChrome() {
       `${formatNumber(snapshot.currentRatePerSecond || 0, 2)} блок/с · raw ${formatNumber(snapshot.currentRawRatePerMinute || 0, 1)} б/м`
     ),
     createSummaryCard(
+      'Добыто',
+      formatNumber(snapshot.totalBlocks || 0),
+      `Аптайм ${formatDuration(snapshot.uptimeMs || 0)}`
+    ),
+    createSummaryCard(
       'Состояние',
       escapeHtml(formatHealthReason(health.reason)),
       escapeHtml(health.diagnosis || '')
-    ),
-    createSummaryCard(
-      'Ресурсы процесса',
-      `${formatNumber(resources.memoryMb || 0, 1)} MB`,
-      `CPU ${formatNumber(resources.cpuPercent || 0, 1)}%`
     )
   ].join('')
 
@@ -1787,17 +1840,7 @@ function renderChrome() {
         configuredBots,
         activeBots,
         runtimeTotalBots,
-        snapshot,
-        resources,
-        statusCopy: state.isDirty
-          ? 'Есть несохранённые изменения. Сначала сохраните конфиг, чтобы мобильная сборка работала с актуальными параметрами.'
-          : buildTopbarSubtitle({
-            configuredBots,
-            activeBots,
-            runtimeTotalBots,
-            isRunning,
-            supportsRuntimeControl
-          })
+        snapshot
       })
       : ''
   }
@@ -1843,6 +1886,7 @@ function renderChrome() {
   if (elements.logPathLabel) elements.logPathLabel.textContent = state.runtime.logPath || '-'
   if (elements.chatLogPathLabel) elements.chatLogPathLabel.textContent = state.runtime.chatLogPath || '-'
   if (elements.runtimePathLabel) elements.runtimePathLabel.textContent = state.runtime.runtimeDir || '-'
+  renderContextSwitcher()
   syncMobileStickyMetrics()
 }
 
@@ -1853,26 +1897,10 @@ function renderDashboard() {
   const configuredNames = new Set(configBots.map(bot => bot.username))
   const cards = []
   const supportsRuntimeControl = state.capabilities.runtimeControl !== false
+  const health = getRuntimeHealth(snapshot)
 
-  cards.push(renderHealthDashboardCard(snapshot))
-
-  if (!supportsRuntimeControl) {
-    cards.push(`
-      <article class="dashboard-card dashboard-card--platform-note">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Android mode</p>
-            <h4>Экономичный мобильный экран</h4>
-          </div>
-        </div>
-        <div class="dashboard-meta">
-          <div class="dashboard-meta-row"><span>Рендер</span><strong>обновляется пакетно</strong></div>
-          <div class="dashboard-meta-row"><span>Навигация</span><strong>нижняя панель + sticky actions</strong></div>
-          <div class="dashboard-meta-row"><span>Runtime</span><strong>desktop backend не вшит в APK</strong></div>
-          <div class="dashboard-meta-row"><span>Назначение</span><strong>конфиг, маршруты, просмотр логов</strong></div>
-        </div>
-      </article>
-    `)
+  if (health.reason && health.reason !== 'mining-ok') {
+    cards.push(renderHealthDashboardCard(snapshot))
   }
 
   if (Object.keys(snapshotBots).length > 0) {
@@ -1932,8 +1960,8 @@ function renderDashboard() {
     })
   } else {
     cards.push(supportsRuntimeControl
-      ? '<div class="dashboard-empty">Добавьте хотя бы одного бота, затем запустите backend, и здесь появится живая сводка по каждому боту.</div>'
-      : '<div class="dashboard-empty">Добавьте хотя бы одного бота. Мобильная сборка сразу покажет конфиг, маршруты и локально сохраненные параметры.</div>'
+      ? '<div class="dashboard-empty">Добавьте бота, сохраните конфиг и запустите runtime.</div>'
+      : '<div class="dashboard-empty">Добавьте бота, чтобы настроить маршрут и сохранить конфиг на устройстве.</div>'
     )
   }
 
@@ -2223,15 +2251,16 @@ function getVisibleSettingsSections() {
 
 function renderSettingsV2() {
   const visibleSections = getVisibleSettingsSections()
-  const sectionTargets = visibleSections.map((section, index) => ({
-    id: `settings-section-${index + 1}`,
-    eyebrow: section.eyebrow,
-    title: section.title
-  }))
 
   const desktopSettingsCard = state.platform === 'desktop'
     ? `
       <article class="settings-card settings-card--section">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Desktop</p>
+            <h4>Приложение</h4>
+          </div>
+        </div>
         <div class="settings-card-grid settings-card-grid--single">
           ${DESKTOP_SETTINGS_FIELDS_V2.map(field => renderSettingsField('desktop', field)).join('')}
         </div>
@@ -2243,14 +2272,6 @@ function renderSettingsV2() {
     ${desktopSettingsCard}
 
     <article class="settings-card settings-card--section">
-      <div class="settings-jump-bar">
-        ${sectionTargets.map(section => `
-          <button class="settings-jump" type="button" data-settings-jump="${section.id}">
-            <span>${escapeHtml(section.eyebrow)}</span>
-            <strong>${escapeHtml(section.title)}</strong>
-          </button>
-        `).join('')}
-      </div>
       <div class="settings-section-stack">
         ${visibleSections.map((section, index) => `
           <section class="settings-subsection" id="settings-section-${index + 1}">
@@ -2260,7 +2281,6 @@ function renderSettingsV2() {
                 <h4>${escapeHtml(section.title)}</h4>
               </div>
             </div>
-            <p class="muted-copy">${escapeHtml(section.description)}</p>
             <div class="settings-card-grid">
               ${section.fields.map(field => renderSettingsField('config', field)).join('')}
             </div>
@@ -2516,11 +2536,44 @@ function renderChatLogs() {
   }
 }
 
+function renderAbout() {
+  if (!elements.aboutContent) return
+
+  const updates = state.updates || {}
+  const updateLabel = updates.latestVersion
+    ? `${updates.latestVersion}${updates.updateAvailable ? ' доступна' : ' актуальна'}`
+    : 'Ещё не проверялось'
+
+  elements.aboutContent.innerHTML = `
+    <article class="about-card">
+      <span class="summary-label">Приложение</span>
+      <strong>ProstoCraft Bot Studio</strong>
+      <span class="summary-note">Версия ${escapeHtml(state.appVersion || '0.0.0')}</span>
+    </article>
+    <article class="about-card">
+      <span class="summary-label">Платформа</span>
+      <strong>${escapeHtml(state.platform === 'android' ? 'Android' : 'Windows')}</strong>
+      <span class="summary-note">${state.capabilities.runtimeControl === false ? 'Конфиг и мониторинг' : 'Локальный runtime'}</span>
+    </article>
+    <article class="about-card">
+      <span class="summary-label">Обновления</span>
+      <strong>${escapeHtml(updateLabel)}</strong>
+      <span class="summary-note">${escapeHtml(formatDateTime(updates.checkedAt || updates.publishedAt))}</span>
+    </article>
+    <article class="about-card">
+      <span class="summary-label">Runtime</span>
+      <strong>${escapeHtml(formatStatus(state.runtime.status).label)}</strong>
+      <span class="summary-note">Ботов: ${formatNumber(state.runtime.snapshot?.activeBots || 0)}/${formatNumber(state.runtime.snapshot?.totalBots || getBots().length)}</span>
+    </article>
+  `
+}
+
 async function persistConfig(showSuccessToast = true) {
   const issues = validateConfig(state.config)
   if (issues.length) {
-    state.activeTab = 'settings'
-    queueRender('tabs', 'validation')
+    state.activeTab = 'more'
+    state.activeMoreView = 'settings'
+    queueRender('tabs', 'chrome', 'settings', 'validation')
     throw new Error('Сначала исправьте ошибки в конфиге на вкладке настроек.')
   }
 
@@ -2707,20 +2760,41 @@ function openUpdateReleasePage() {
 }
 
 function switchTab(nextTab) {
-  if (!nextTab || state.activeTab === nextTab) {
+  if (!nextTab) {
     return
   }
 
-  state.activeTab = nextTab
+  const previousTab = state.activeTab
+  const previousPanel = getActivePanelName()
+
+  if (nextTab === 'chat') {
+    state.activeLogView = 'chat'
+  } else if (nextTab === 'logs') {
+    state.activeLogView = state.activeLogView || 'events'
+  } else if (['settings', 'updates', 'files', 'about'].includes(nextTab)) {
+    state.activeMoreView = nextTab
+  } else if (nextTab === 'more') {
+    state.activeMoreView = state.activeMoreView || 'settings'
+  }
+
+  const nextTopLevelTab = getTopLevelTabForRequest(nextTab)
+  state.activeTab = nextTopLevelTab
+  const nextPanel = getActivePanelName()
+
+  if (previousTab === nextTopLevelTab && previousPanel === nextPanel) {
+    return
+  }
+
   queueRender(
     'tabs',
     'chrome',
-    nextTab === 'dashboard' ? 'dashboard' : null,
-    nextTab === 'bots' ? ['botList', 'botEditor'] : null,
-    nextTab === 'settings' ? 'settings' : null,
-    nextTab === 'updates' ? 'updates' : null,
-    nextTab === 'logs' ? 'logs' : null,
-    nextTab === 'chat' ? 'chat' : null
+    nextPanel === 'dashboard' ? 'dashboard' : null,
+    nextPanel === 'bots' ? ['botList', 'botEditor'] : null,
+    nextPanel === 'settings' ? ['settings', 'validation'] : null,
+    nextPanel === 'updates' ? 'updates' : null,
+    nextPanel === 'logs' ? 'logs' : null,
+    nextPanel === 'chat' ? 'chat' : null,
+    nextPanel === 'about' ? 'about' : null
   )
 }
 
@@ -2840,6 +2914,30 @@ function attachStaticListeners() {
     button.addEventListener('click', () => {
       switchTab(button.dataset.tab)
     })
+  })
+
+  elements.contextSwitcher.addEventListener('click', event => {
+    const logViewButton = event.target.closest('[data-log-view]')
+    if (logViewButton) {
+      state.activeLogView = logViewButton.dataset.logView === 'chat' ? 'chat' : 'events'
+      state.activeTab = 'logs'
+      queueRender('tabs', 'chrome', state.activeLogView === 'chat' ? 'chat' : 'logs')
+      return
+    }
+
+    const moreViewButton = event.target.closest('[data-more-view]')
+    if (!moreViewButton) return
+
+    state.activeMoreView = moreViewButton.dataset.moreView || 'settings'
+    state.activeTab = 'more'
+    const activePanel = getActivePanelName()
+    queueRender(
+      'tabs',
+      'chrome',
+      activePanel === 'settings' ? ['settings', 'validation'] : null,
+      activePanel === 'updates' ? 'updates' : null,
+      activePanel === 'about' ? 'about' : null
+    )
   })
 
   elements.saveConfigButton.addEventListener('click', async () => {
@@ -3083,14 +3181,10 @@ function attachStaticListeners() {
         resizeParts.push('dashboard')
       } else if (state.activeTab === 'bots') {
         resizeParts.push('botList', 'botEditor')
-      } else if (state.activeTab === 'settings') {
-        resizeParts.push('settings')
-      } else if (state.activeTab === 'updates') {
-        resizeParts.push('updates')
       } else if (state.activeTab === 'logs') {
-        resizeParts.push('logs')
-      } else if (state.activeTab === 'chat') {
-        resizeParts.push('chat')
+        resizeParts.push(state.activeLogView === 'chat' ? 'chat' : 'logs')
+      } else if (state.activeTab === 'more') {
+        resizeParts.push(getActivePanelName())
       }
 
       queueRender(resizeParts)
@@ -3124,7 +3218,7 @@ function buildMobileActions({ supportsRuntimeControl, supportsImport, supportsEx
     actions.push({ id: 'add-bot', label: 'Добавить', variant: 'primary' })
     if (selectedBot) actions.push({ id: 'duplicate-bot', label: 'Дубль', variant: 'secondary' })
     if (selectedBot) actions.push({ id: 'remove-bot', label: 'Удалить', variant: 'danger' })
-  } else if (state.activeTab === 'settings') {
+  } else if (state.activeTab === 'more' && state.activeMoreView === 'settings') {
     if (supportsImport) actions.push({ id: 'import-config', label: 'Импорт', variant: 'secondary' })
     if (supportsExport) actions.push({ id: 'export-config', label: 'Экспорт', variant: 'secondary' })
     actions.push({ id: 'reset-config', label: 'Сбросить', variant: 'ghost' })
@@ -3171,7 +3265,7 @@ function renderActionButtons(actions) {
   return actions.map(renderMobileActionButton).join('')
 }
 
-function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, runtimeTotalBots, snapshot, resources, statusCopy }) {
+function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, runtimeTotalBots, snapshot }) {
   const selectedBot = getSelectedBot()
   const snapshotBots = state.runtime.snapshot?.bots || {}
   const health = getRuntimeHealth(snapshot)
@@ -3216,17 +3310,15 @@ function buildMobileOverviewMarkup({ runtimeStatus, configuredBots, activeBots, 
         <span>Активных: ${formatNumber(activeBots)}/${formatNumber(runtimeTotalBots)}</span>
         <span>${selectedBot ? `Выбран: ${escapeHtml(selectedBot.username)}` : 'Бот не выбран'}</span>
       </div>
-      <p class="mini-status-card__copy">${escapeHtml(statusCopy)}</p>
       <div class="mobile-status-actions">
         ${renderActionButtons(buildMobileHeaderActions())}
       </div>
     </article>
 
     <div class="mini-summary-grid">
-      ${createCompactSummaryCard('Всего добыто', formatNumber(snapshot.totalBlocks || 0), `Аптайм ${formatDuration(snapshot.uptimeMs || 0)}`)}
       ${createCompactSummaryCard('Effective', `${formatNumber(snapshot.currentRatePerMinute || 0, 1)} бл/мин`, `Raw ${formatNumber(snapshot.currentRawRatePerMinute || 0, 1)} б/м`)}
+      ${createCompactSummaryCard('Добыто', formatNumber(snapshot.totalBlocks || 0), `Аптайм ${formatDuration(snapshot.uptimeMs || 0)}`)}
       ${createCompactSummaryCard('Состояние', formatHealthReason(health.reason), health.diagnosis || '')}
-      ${createCompactSummaryCard('Память', `${formatNumber(resources.memoryMb || 0, 1)} MB`, `CPU ${formatNumber(resources.cpuPercent || 0, 1)}%`)}
     </div>
 
     ${botStrip}
