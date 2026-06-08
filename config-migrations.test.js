@@ -26,6 +26,7 @@ const config = {
     speedGuardMinLearnRate: 450,
     speedGuardTargetRatio: 0.5,
     speedGuardRateWindowMs: 1000,
+    speedGuardReconnectAfterRecoveries: 2,
     emptyTargetButtonCooldownMs: 123
   },
   logging: {
@@ -50,6 +51,7 @@ assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.antibot, 'limbo
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.antibot, 'limboFallbackY'), false)
 assert.strictEqual(migrated.timing.speedGuardTargetRatio, 0.9)
 assert.strictEqual(migrated.timing.speedGuardRateWindowMs, 30000)
+assert.strictEqual(migrated.timing.speedGuardReconnectAfterRecoveries, 3)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'emptyTargetButtonCooldownMs'), false)
 assert.strictEqual(migrated.logging.detailedEvents, true)
 assert.strictEqual(migrated.logging.logServerMessages, true)

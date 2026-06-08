@@ -11,6 +11,9 @@ const {
   assert.strictEqual(classifyHealthEvent({ message: 'read ECONNRESET' }), 'network-reset')
   assert.strictEqual(classifyHealthEvent({ message: 'getaddrinfo ENOTFOUND mc.prostocraft.com' }), 'dns-failure')
   assert.strictEqual(classifyHealthEvent({ message: 'connect ETIMEDOUT 10.0.0.1:25565' }), 'connect-timeout')
+  assert.strictEqual(classifyHealthEvent({ message: 'mining-confirmation ratio dropped' }), 'mining-confirmation')
+  assert.strictEqual(classifyHealthEvent({ message: 'packet budget reduced' }), 'packet-budget')
+  assert.strictEqual(classifyHealthEvent({ message: 'fallback dig activated' }), 'fallback-dig')
 }
 
 {
@@ -61,6 +64,18 @@ const {
   assert.strictEqual(tick.reason, 'dns-failure')
   assert.strictEqual(tick.downtimeMs, 10000)
   assert.strictEqual(tick.lastRecoveryAction, 'reconnect scheduled')
+}
+
+{
+  const state = createHealthState(100000)
+  const joining = updateHealthState(state, {
+    reason: 'joining',
+    lastRecoveryAction: 'limbo passed'
+  }, 101000)
+
+  assert.strictEqual(joining.reason, 'joining')
+  assert.strictEqual(joining.state, 'recovering')
+  assert.strictEqual(joining.lastRecoveryAction, 'limbo passed')
 }
 
 {

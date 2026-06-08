@@ -4,12 +4,14 @@ const os = require('os')
 const path = require('path')
 const {
   buildUpdateInfoFromRelease,
+  checkForUpdates,
   compareVersions,
   findChecksumForAsset,
   isNewerVersion,
   parseSha256Sums,
   selectUpdateAsset,
-  verifyFileSha256
+  verifyFileSha256,
+  writeUpdateCache
 } = require('./update-service')
 
 const release = {
@@ -87,7 +89,26 @@ const checksumText = [
 ;(async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prostocraft-update-test-'))
   const tempFile = path.join(tempDir, 'asset.bin')
+  const cachePath = path.join(tempDir, 'latest-cache.json')
   fs.writeFileSync(tempFile, 'broken update', 'utf8')
+
+  writeUpdateCache(cachePath, { release, checksumText })
+  const cachedInfo = await checkForUpdates({
+    platform: 'desktop',
+    currentVersion: '2.0.0',
+    cachePath,
+    sources: [
+      {
+        owner: 'offline',
+        apiUrl: 'https://127.0.0.1:1/releases/latest',
+        releaseUrl: 'https://example.test/latest'
+      }
+    ],
+    timeoutMs: 10
+  })
+  assert.strictEqual(cachedInfo.sourceMode, 'cache')
+  assert.strictEqual(cachedInfo.updateAvailable, true)
+  assert.strictEqual(cachedInfo.asset.name, 'ProstoCraft.Bot.Studio-Setup-2.0.1.exe')
 
   await assert.rejects(
     () => verifyFileSha256(tempFile, 'c'.repeat(64)),

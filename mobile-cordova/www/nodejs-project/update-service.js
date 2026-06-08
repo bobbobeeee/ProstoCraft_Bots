@@ -9,13 +9,15 @@ const DEFAULT_UPDATE_SOURCES = [
     owner: 'bobbobeeee',
     repo: 'ProstoCraft_Bots',
     apiUrl: 'https://api.github.com/repos/bobbobeeee/ProstoCraft_Bots/releases/latest',
-    releaseUrl: 'https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest'
+    releaseUrl: 'https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest',
+    manifestUrl: 'https://raw.githubusercontent.com/bobbobeeee/ProstoCraft_Bots/main/latest-release.json'
   },
   {
     owner: 'merrobocop',
     repo: 'ProstoCraft_Bots',
     apiUrl: 'https://api.github.com/repos/merrobocop/ProstoCraft_Bots/releases/latest',
-    releaseUrl: 'https://github.com/merrobocop/ProstoCraft_Bots/releases/latest'
+    releaseUrl: 'https://github.com/merrobocop/ProstoCraft_Bots/releases/latest',
+    manifestUrl: 'https://raw.githubusercontent.com/merrobocop/ProstoCraft_Bots/main/latest-release.json'
   }
 ]
 
@@ -137,6 +139,8 @@ function buildUpdateInfoFromRelease(release, options = {}) {
     publishedAt: release?.published_at || release?.created_at || '',
     body: release?.body || '',
     source: options.source || null,
+    sourceMode: options.sourceMode || 'online',
+    checkedAt: options.checkedAt || new Date().toISOString(),
     asset,
     checksum: checksumHash
       ? {
@@ -211,6 +215,50 @@ async function fetchText(url, options = {}) {
   return buffer.toString('utf8')
 }
 
+function normalizeManifestPayload(payload = {}) {
+  if (payload.release) {
+    return {
+      release: payload.release,
+      checksumText: payload.checksumText || payload.sha256Sums || '',
+      source: payload.source || null
+    }
+  }
+
+  return {
+    release: payload,
+    checksumText: payload.checksumText || payload.sha256Sums || '',
+    source: payload.source || null
+  }
+}
+
+async function fetchReleaseManifest(url, options = {}) {
+  const payload = await fetchJson(url, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.headers || {})
+    }
+  })
+  return normalizeManifestPayload(payload)
+}
+
+function writeUpdateCache(cachePath, payload) {
+  if (!cachePath || !payload?.release) return
+
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true })
+  fs.writeFileSync(cachePath, `${JSON.stringify({
+    savedAt: new Date().toISOString(),
+    release: payload.release,
+    checksumText: payload.checksumText || '',
+    source: payload.source || null
+  }, null, 2)}\n`, 'utf8')
+}
+
+function readUpdateCache(cachePath) {
+  if (!cachePath || !fs.existsSync(cachePath)) return null
+  return normalizeManifestPayload(JSON.parse(fs.readFileSync(cachePath, 'utf8')))
+}
+
 async function checkForUpdates(options = {}) {
   const sources = Array.isArray(options.sources) && options.sources.length
     ? options.sources
@@ -225,14 +273,55 @@ async function checkForUpdates(options = {}) {
         ? await fetchText(checksumAsset.downloadUrl, options)
         : ''
 
+      writeUpdateCache(options.cachePath, { release, checksumText, source })
+
       return buildUpdateInfoFromRelease(release, {
         platform: options.platform || 'desktop',
         currentVersion: options.currentVersion,
         checksumText,
-        source
+        source,
+        sourceMode: 'online'
       })
     } catch (error) {
       errors.push(`${source.owner || source.apiUrl}: ${error.message || String(error)}`)
+    }
+
+    if (source.manifestUrl) {
+      try {
+        const manifest = await fetchReleaseManifest(source.manifestUrl, options)
+        const release = manifest.release
+        const checksumText = manifest.checksumText || ''
+        const manifestSource = manifest.source || source
+
+        writeUpdateCache(options.cachePath, { release, checksumText, source: manifestSource })
+
+        return buildUpdateInfoFromRelease(release, {
+          platform: options.platform || 'desktop',
+          currentVersion: options.currentVersion,
+          checksumText,
+          source: manifestSource,
+          sourceMode: 'fallback'
+        })
+      } catch (error) {
+        errors.push(`${source.owner || source.manifestUrl}: ${error.message || String(error)}`)
+      }
+    }
+  }
+
+  const cached = readUpdateCache(options.cachePath)
+  if (cached?.release) {
+    const cachedInfo = buildUpdateInfoFromRelease(cached.release, {
+      platform: options.platform || 'desktop',
+      currentVersion: options.currentVersion,
+      checksumText: cached.checksumText || '',
+      source: cached.source || null,
+      sourceMode: 'cache'
+    })
+
+    return {
+      ...cachedInfo,
+      sourceMode: 'cache',
+      error: errors.join('; ')
     }
   }
 
@@ -241,6 +330,7 @@ async function checkForUpdates(options = {}) {
     updateAvailable: false,
     currentVersion: normalizeVersion(options.currentVersion),
     latestVersion: '',
+    sourceMode: 'offline',
     error: errors.join('; ') || 'Unable to check for updates.'
   }
 }
@@ -376,11 +466,14 @@ module.exports = {
   checkForUpdates,
   compareVersions,
   downloadUpdate,
+  fetchReleaseManifest,
   findChecksumForAsset,
   getPlatformAssetPattern,
   isNewerVersion,
   normalizeVersion,
   parseSha256Sums,
+  readUpdateCache,
   selectUpdateAsset,
-  verifyFileSha256
+  verifyFileSha256,
+  writeUpdateCache
 }

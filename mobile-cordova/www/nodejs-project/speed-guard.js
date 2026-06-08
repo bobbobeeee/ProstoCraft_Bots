@@ -145,6 +145,39 @@ function getAdaptiveWaitMs(profile, baseWaitMs, intervalMultiplier = 3) {
     : base
 }
 
+function shouldEscalateSpeedDrop(options = {}) {
+  const currentRate = Number(options.currentRate)
+  const targetRate = Number(options.targetRate)
+  if (!Number.isFinite(currentRate) || !Number.isFinite(targetRate) || targetRate <= 0 || currentRate >= targetRate) {
+    return false
+  }
+
+  const recoveries = Math.max(0, Number(options.recoveries) || 0)
+  const reconnectAfterRecoveries = Math.max(1, Number(options.reconnectAfterRecoveries) || 1)
+  const sustainedLowMs = Math.max(0, Number(options.sustainedLowMs) || 0)
+  const sustainedDropReconnectMs = Math.max(0, Number(options.sustainedDropReconnectMs) || 0)
+  const idleFor = Number(options.idleFor)
+  const noProgressReconnectMs = Math.max(0, Number(options.noProgressReconnectMs) || 0)
+  const severeDropRatio = Math.min(0.99, Math.max(0.1, Number(options.severeDropRatio ?? 0.85) || 0.85))
+
+  if (Number.isFinite(idleFor) && noProgressReconnectMs > 0 && idleFor >= noProgressReconnectMs) {
+    return true
+  }
+
+  if (sustainedDropReconnectMs > 0 && sustainedLowMs >= sustainedDropReconnectMs) {
+    return true
+  }
+
+  if (recoveries >= reconnectAfterRecoveries) {
+    const currentRatio = currentRate / targetRate
+    if (currentRatio <= severeDropRatio) return true
+    if (sustainedDropReconnectMs <= 0) return true
+    if (sustainedLowMs >= Math.ceil(sustainedDropReconnectMs / 2)) return true
+  }
+
+  return false
+}
+
 module.exports = {
   createSpeedGuardProfile,
   getAdaptiveRateWindowMs,
@@ -154,5 +187,6 @@ module.exports = {
   getSpeedGuardTargetRatioFromDropPercent,
   pruneRateSamples,
   recordSpeedGuardProgress,
-  rememberSpeedGuardPeak
+  rememberSpeedGuardPeak,
+  shouldEscalateSpeedDrop
 }

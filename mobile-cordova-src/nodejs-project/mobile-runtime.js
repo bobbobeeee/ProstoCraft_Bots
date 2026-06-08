@@ -21,6 +21,7 @@ const LOG_PATH = path.join(DATA_DIR, 'bot.log')
 const CHAT_LOG_PATH = path.join(DATA_DIR, 'chat.log')
 const UPDATES_DIR = path.join(DATA_DIR, 'updates')
 const PENDING_UPDATE_PATH = path.join(UPDATES_DIR, 'pending-update.json')
+const UPDATE_CACHE_PATH = path.join(UPDATES_DIR, 'latest-update-cache.json')
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.json')
 const BOT_ENTRY_PATH = path.join(__dirname, 'bot.js')
 const MONITORING_PATH = path.join(__dirname, 'monitoring.js')
@@ -122,6 +123,27 @@ function createEmptyRuntime() {
       paused: false,
       currentRatePerMinute: 0,
       currentRatePerSecond: 0,
+      currentEffectiveRatePerMinute: 0,
+      currentEffectiveRatePerSecond: 0,
+      currentRawRatePerMinute: 0,
+      currentRawRatePerSecond: 0,
+      performance: {
+        rawRate: 0,
+        rawRatePerSecond: 0,
+        effectiveRate: 0,
+        effectiveRatePerSecond: 0,
+        peakRate: 0,
+        sustainableRate: 0,
+        confirmationRatio: 1,
+        confirmLatencyMs: 0,
+        packetMode: 'fast',
+        packetBudget: null,
+        fallbackDigCount: 0,
+        pendingBreaks: 0,
+        stalePendingCleared: 0,
+        lastMiningBottleneck: '',
+        lastSlowdownReason: ''
+      },
       bots: {},
       health: createHealthState(Date.now())
     },
@@ -148,6 +170,9 @@ function createEmptyUpdateState() {
     body: '',
     asset: null,
     checksum: null,
+    sourceMode: 'idle',
+    signatureStatus: '',
+    installResumeState: '',
     progress: null,
     downloadedFilePath: '',
     downloadedFileName: '',
@@ -314,6 +339,15 @@ function sendAndroidInstallRequest(apkPath, source = 'install-button') {
 
   lastInstallRequestAt = Date.now()
   notifyAndroidUpdateInstalling(apkPath)
+  updateState = {
+    ...buildUpdatePayload(),
+    status: 'installing',
+    installResumeState: source === 'android-resume'
+      ? `resume-retry-${installResumeRetryCount + 1}`
+      : 'install-requested',
+    error: ''
+  }
+  publishUpdateState()
   persistRuntimeLog(
     source === 'android-resume'
       ? 'Повторно открываю установку APK после возврата из настроек Android.'
@@ -522,7 +556,8 @@ async function checkMobileUpdates() {
 
   const updateInfo = await checkForUpdates({
     platform: 'android',
-    currentVersion: APP_VERSION
+    currentVersion: APP_VERSION,
+    cachePath: UPDATE_CACHE_PATH
   })
   const payload = applyUpdateInfo(updateInfo)
   if (!payload.updateAvailable) {
@@ -636,6 +671,7 @@ function installMobileUpdate() {
   updateState = {
     ...buildUpdatePayload(),
     status: 'installing',
+    installResumeState: 'install-requested',
     error: ''
   }
   publishUpdateState()

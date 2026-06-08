@@ -250,41 +250,10 @@ function signUnsignedApkIfNeeded(sourceApk, androidSdkRoot, javaHome, env) {
     return sourceApk
   }
 
-  const fallbackKeystore = path.join(gradleUserHome, 'prostocraft-ci-release.keystore')
-  const signedApk = path.join(path.dirname(sourceApk), 'app-release-ci-signed.apk')
-  const fallbackAlias = 'prostocraft-ci-release'
-  const fallbackPassword = 'prostocraft-ci-release'
-  const keytool = resolveKeytool(javaHome)
-  const apksigner = resolveAndroidBuildTool(androidSdkRoot, 'apksigner')
-
-  fs.mkdirSync(path.dirname(fallbackKeystore), { recursive: true })
-
-  if (!fs.existsSync(fallbackKeystore)) {
-    run(keytool, [
-      '-genkeypair',
-      '-v',
-      '-keystore', fallbackKeystore,
-      '-storepass', fallbackPassword,
-      '-keypass', fallbackPassword,
-      '-alias', fallbackAlias,
-      '-keyalg', 'RSA',
-      '-keysize', '2048',
-      '-validity', '10000',
-      '-dname', 'CN=ProstoCraft Bot Studio CI,O=ProstoCraft Bot Studio,C=US'
-    ], { cwd: projectRoot, env })
-  }
-
-  run(apksigner, [
-    'sign',
-    '--ks', fallbackKeystore,
-    '--ks-key-alias', fallbackAlias,
-    '--ks-pass', `pass:${fallbackPassword}`,
-    '--key-pass', `pass:${fallbackPassword}`,
-    '--out', signedApk,
-    sourceApk
-  ], { cwd: projectRoot, env })
-
-  return signedApk
+  throw new Error(
+    'Release APK is unsigned. Refusing to create a fallback/CI-signed APK because Android updates require the stable release key. ' +
+    'Check android-signing/prostocraft-release.keystore and mobile-cordova/build.json release signing settings.'
+  )
 }
 
 function writeFileIfMissing(filePath, contents) {

@@ -7,7 +7,8 @@ const {
   getSpeedGuardTargetRate,
   getSpeedGuardTargetRatioFromDropPercent,
   recordSpeedGuardProgress,
-  rememberSpeedGuardPeak
+  rememberSpeedGuardPeak,
+  shouldEscalateSpeedDrop
 } = require('./speed-guard')
 
 {
@@ -63,6 +64,52 @@ const {
   assert.strictEqual(profile.averageProgressIntervalMs, 45000)
   assert.strictEqual(getAdaptiveRateWindowMs(profile, 30000), 135000)
   assert.strictEqual(getAdaptiveWaitMs(profile, 20000, 4), 180000)
+}
+
+{
+  assert.strictEqual(shouldEscalateSpeedDrop({
+    currentRate: 690,
+    targetRate: 713,
+    recoveries: 1,
+    reconnectAfterRecoveries: 2,
+    sustainedLowMs: 15000,
+    sustainedDropReconnectMs: 45000,
+    idleFor: 0,
+    noProgressReconnectMs: 20000
+  }), false)
+
+  assert.strictEqual(shouldEscalateSpeedDrop({
+    currentRate: 476,
+    targetRate: 713,
+    recoveries: 2,
+    reconnectAfterRecoveries: 2,
+    sustainedLowMs: 15000,
+    sustainedDropReconnectMs: 45000,
+    idleFor: 0,
+    noProgressReconnectMs: 20000
+  }), true)
+
+  assert.strictEqual(shouldEscalateSpeedDrop({
+    currentRate: 690,
+    targetRate: 713,
+    recoveries: 2,
+    reconnectAfterRecoveries: 2,
+    sustainedLowMs: 46000,
+    sustainedDropReconnectMs: 45000,
+    idleFor: 0,
+    noProgressReconnectMs: 20000
+  }), true)
+
+  assert.strictEqual(shouldEscalateSpeedDrop({
+    currentRate: 713,
+    targetRate: 713,
+    recoveries: 5,
+    reconnectAfterRecoveries: 2,
+    sustainedLowMs: 60000,
+    sustainedDropReconnectMs: 45000,
+    idleFor: 60000,
+    noProgressReconnectMs: 20000
+  }), false)
 }
 
 console.log('speed-guard tests passed')

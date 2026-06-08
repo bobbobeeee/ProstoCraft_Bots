@@ -67,6 +67,27 @@ const runtimeState = {
     paused: false,
     currentRatePerMinute: 0,
     currentRatePerSecond: 0,
+    currentEffectiveRatePerMinute: 0,
+    currentEffectiveRatePerSecond: 0,
+    currentRawRatePerMinute: 0,
+    currentRawRatePerSecond: 0,
+    performance: {
+      rawRate: 0,
+      rawRatePerSecond: 0,
+      effectiveRate: 0,
+      effectiveRatePerSecond: 0,
+      peakRate: 0,
+      sustainableRate: 0,
+      confirmationRatio: 1,
+      confirmLatencyMs: 0,
+      packetMode: 'fast',
+      packetBudget: null,
+      fallbackDigCount: 0,
+      pendingBreaks: 0,
+      stalePendingCleared: 0,
+      lastMiningBottleneck: '',
+      lastSlowdownReason: ''
+    },
     bots: {}
   },
   health: createHealthState(Date.now()),
@@ -87,6 +108,9 @@ function createEmptyUpdateState() {
     body: '',
     asset: null,
     checksum: null,
+    sourceMode: 'idle',
+    signatureStatus: '',
+    installResumeState: '',
     progress: null,
     downloadedFilePath: '',
     downloadedFileName: '',
@@ -417,6 +441,10 @@ function getUpdatesDir() {
   return path.join(getRuntimeDir(), 'updates')
 }
 
+function getUpdateCachePath() {
+  return path.join(getUpdatesDir(), 'latest-update-cache.json')
+}
+
 function buildUpdatePayload() {
   return {
     ...createEmptyUpdateState(),
@@ -457,7 +485,8 @@ async function checkAppUpdates() {
 
   const updateInfo = await checkForUpdates({
     platform: 'desktop',
-    currentVersion: APP_VERSION
+    currentVersion: APP_VERSION,
+    cachePath: getUpdateCachePath()
   })
   const payload = applyUpdateInfo(updateInfo)
   publishUpdateState()

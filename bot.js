@@ -27,7 +27,8 @@ const {
   getSpeedGuardTargetRate,
   getSpeedGuardTargetRatioFromDropPercent,
   recordSpeedGuardProgress,
-  rememberSpeedGuardPeak: rememberAdaptiveSpeedGuardPeak
+  rememberSpeedGuardPeak: rememberAdaptiveSpeedGuardPeak,
+  shouldEscalateSpeedDrop
 } = require('./speed-guard')
 const {
   LIMBO_FILTER_DEFAULTS,
@@ -36,6 +37,40 @@ const {
   getLoadedChunkSpeed,
   getMinimumCheckMs
 } = require('./limbo-filter')
+const {
+  createPacketGovernor,
+  getPacketGovernorLimits,
+  getPacketGovernorSnapshot,
+  recordPacketIncident
+} = require('./runtime-core/packet-governor')
+const {
+  createMiningController,
+  evaluateMiningController,
+  getMiningControllerLimits,
+  getMiningControllerSnapshot,
+  getPacketOnlyRecoveryDecision,
+  pruneMiningControllerPending,
+  recordBreakPacketConfirmed,
+  recordBreakPacketsSent,
+  recordFallbackDig,
+  recordMiningPacketIncident,
+  recordPacketOnlySoftRecovery,
+  resetMiningControllerRecovery
+} = require('./runtime-core/mining-controller')
+const {
+  createLifecycleState,
+  getLifecycleSnapshot: getLifecycleStateSnapshot,
+  transitionLifecycle
+} = require('./runtime-core/lifecycle-state')
+const {
+  addTimelineEvent,
+  createEventTimeline,
+  getTimelineSnapshot
+} = require('./runtime-core/event-timeline')
+const {
+  createCaptchaEvidence,
+  validateCaptchaEvidence
+} = require('./runtime-core/captcha-evidence')
 
 const HOST_CONTROLLED = Boolean(global.__BOT_HOST__)
 const MOBILE_RUNTIME_PROFILE = HOST_CONTROLLED && process.env.BOT_MOBILE_RUNTIME === '1'
@@ -487,6 +522,12 @@ const PACKET_BREAK_CONFIRM_WINDOW_MS = Math.max(50, Number(config.timing.packetB
 const BLOCK_COUNT_DEDUPE_MS = Math.max(0, Number(config.timing.blockCountDedupeMs ?? 75) || 75)
 const PACKET_ONLY_MINING = config.timing.packetOnlyMining !== false
 const PACKET_ONLY_FALLBACK_MS = Math.max(100, Number(config.timing.packetOnlyFallbackMs ?? 1200) || 1200)
+const MINING_CONTROLLER_ADJUST_INTERVAL_MS = Math.max(3000, Number(config.timing.miningControllerAdjustIntervalMs ?? 12000) || 12000)
+const MINING_CONTROLLER_SOFT_RECOVERY_LIMIT = Math.max(1, Number(config.timing.miningControllerSoftRecoveryLimit ?? 3) || 3)
+const MINING_CONTROLLER_MIN_BUDGET_SCALE = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerMinBudgetScale ?? 0.55) || 0.55))
+const MINING_CONTROLLER_GOOD_CONFIRMATION_RATIO = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerGoodConfirmationRatio ?? 0.86) || 0.86))
+const MINING_CONTROLLER_BAD_CONFIRMATION_RATIO = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerBadConfirmationRatio ?? 0.55) || 0.55))
+const MINING_CONTROLLER_STALE_PENDING_MS = Math.max(100, Number(config.timing.miningControllerStalePendingMs ?? PACKET_ONLY_FALLBACK_MS) || PACKET_ONLY_FALLBACK_MS)
 const PREEMPTIVE_BREAK_TARGETS = config.timing.preemptiveBreakTargets === true
 const FAST_DIG_CONFIRM_MS = Math.max(5, Number(config.timing.fastDigConfirmMs ?? 15) || 15)
 const FAST_DIG_RETRY_MS = Math.max(1, Number(config.timing.fastDigRetryMs ?? 5) || 5)
@@ -564,6 +605,7 @@ const LIMBO_DETECTION_TIMEOUT_MS = Math.max(1500, Number(config.antibot.limboDet
 const LIMBO_COMPLETION_GRACE_MS = Math.max(0, Number(config.antibot.limboCompletionGraceMs ?? 900) || 900)
 const LIMBO_POST_FALL_JOIN_MS = Math.max(0, Number(config.antibot.limboPostFallJoinMs ?? 900) || 900)
 const LIMBO_MENU_WAIT_MS = Math.max(0, Number(config.antibot.limboMenuWaitMs ?? 12000) || 12000)
+const POST_LIMBO_MENU_WATCHDOG_MS = Math.max(10000, Number(config.timing?.postLimboMenuWatchdogMs ?? 45000) || 45000)
 const SCANNER_PASSIVE_WAIT_MS = Math.max(15000, Number(config.antibot.scannerPassiveWaitMs ?? 60000) || 60000)
 const SCANNER_RECENT_POSITION_MS = Math.max(500, Number(config.antibot.scannerRecentPositionMs ?? 5000) || 5000)
 const SCANNER_POSITION_WAIT_MS = Math.max(500, Number(config.antibot.scannerPositionWaitMs ?? 2500) || 2500)
@@ -619,6 +661,8 @@ const ENABLE_SOFT_RESTART = config.features?.enableSoftRestart !== false
 // If the server does not confirm the block update quickly, it falls back to
 // mineflayer.dig(), so vanilla/strict servers still work.
 const ENABLE_AGGRESSIVE_MINING = config.features?.enableAggressiveMining !== false
+const ENABLE_ADAPTIVE_PACKET_GOVERNOR = config.features?.adaptivePacketGovernorEnabled !== false
+const ENABLE_ADAPTIVE_MINING_CONTROLLER = config.features?.adaptiveMiningControllerEnabled !== false
 const ENABLE_PERIODIC_ROTATION = config.features?.enablePeriodicRotation === true
 const SPEED_WINDOW_MS = Math.max(1000, config.monitor?.speedWindowMs || 10000)
 const SPEED_GUARD_ENABLED = config.features?.enableSpeedGuard !== false
@@ -634,10 +678,23 @@ const SPEED_GUARD_TARGET_RATIO = getSpeedGuardTargetRatioFromDropPercent(
 const SPEED_GUARD_RATE_WINDOW_MS = Math.max(SPEED_WINDOW_MS, Number(config.timing?.speedGuardRateWindowMs ?? 30000) || 30000)
 const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
 const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
-const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(1, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
+const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(3, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
+const SPEED_GUARD_SOFT_RESTART_AFTER_RECOVERIES = Math.max(2, Number(config.timing?.speedGuardSoftRestartAfterRecoveries ?? 2) || 2)
+const SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS = Math.max(
+  SPEED_GUARD_LOW_RATE_MS,
+  Number(config.timing?.speedGuardSustainedDropReconnectMs ?? 45000) || 45000
+)
+const SPEED_GUARD_SEVERE_DROP_RATIO = Math.min(
+  0.95,
+  Math.max(0.4, Number(config.timing?.speedGuardSevereDropRatio ?? 0.85) || 0.85)
+)
 const SPEED_GUARD_PEAK_MEMORY_MS = Math.max(
   5 * 60 * 1000,
   Number(config.timing?.speedGuardPeakMemoryMs ?? 2 * 60 * 60 * 1000) || (2 * 60 * 60 * 1000)
+)
+const PACKET_GOVERNOR_RECOVERY_MS = Math.max(
+  BREAK_PACKET_SAFE_MODE_MS,
+  Number(config.timing?.packetGovernorRecoveryMs ?? 5 * 60 * 1000) || (5 * 60 * 1000)
 )
 const HEADLESS_MODE = process.argv.includes('--headless') ||
   process.env.BOT_HEADLESS === '1' ||
@@ -699,10 +756,13 @@ const monitorData = {
   startTime: Date.now(),
   bots: {},
   totalBlocks: 0,
-  health: createHealthState(Date.now())
+  health: createHealthState(Date.now()),
+  timeline: createEventTimeline(100)
 }
 const stabilityCooldowns = new Map()
 const packetSafetyCooldowns = new Map()
+const packetGovernors = new Map()
+const miningControllers = new Map()
 const speedGuardProfiles = new Map()
 const botFilterRetryStates = new Map()
 monitorData.scriptResources = {
@@ -718,9 +778,123 @@ function setRuntimeHealth(reason, details = {}) {
   if (monitorData.health.reason !== previousReason && monitorData.health.reason !== 'mining-ok') {
     const label = getHealthLogLabel(monitorData.health.reason)
     writeToLogFile(`[HEALTH] ${label}: ${monitorData.health.diagnosis}`)
+    recordTimelineEvent({
+      type: 'health',
+      severity: monitorData.health.severity,
+      reason: monitorData.health.reason,
+      message: monitorData.health.diagnosis
+    })
   }
 
   return monitorData.health
+}
+
+function recordTimelineEvent(event = {}) {
+  monitorData.timeline = addTimelineEvent(monitorData.timeline, event)
+  return monitorData.timeline
+}
+
+function getPacketGovernor(botName) {
+  if (!packetGovernors.has(botName)) {
+    packetGovernors.set(botName, createPacketGovernor({
+      enabled: ENABLE_ADAPTIVE_PACKET_GOVERNOR,
+      recoveryMs: PACKET_GOVERNOR_RECOVERY_MS
+    }))
+  }
+  return packetGovernors.get(botName)
+}
+
+function getMiningController(botName) {
+  const key = botName || 'default'
+  if (!miningControllers.has(key)) {
+    miningControllers.set(key, createMiningController({
+      enabled: ENABLE_ADAPTIVE_MINING_CONTROLLER,
+      adjustIntervalMs: MINING_CONTROLLER_ADJUST_INTERVAL_MS,
+      minBudgetScale: MINING_CONTROLLER_MIN_BUDGET_SCALE,
+      maxBudgetScale: 1,
+      goodConfirmationRatio: MINING_CONTROLLER_GOOD_CONFIRMATION_RATIO,
+      badConfirmationRatio: MINING_CONTROLLER_BAD_CONFIRMATION_RATIO,
+      stalePendingMs: MINING_CONTROLLER_STALE_PENDING_MS,
+      latencyWarnMs: PACKET_ONLY_FALLBACK_MS,
+      softRecoveryLimit: MINING_CONTROLLER_SOFT_RECOVERY_LIMIT,
+      softRecoveryCooldownMs: Math.max(50, FAST_DIG_RETRY_MS * 2)
+    }))
+  }
+  return miningControllers.get(key)
+}
+
+function getPacketGovernorBaseLimits() {
+  const baseLimits = {
+    fastPerSecond: BREAK_PACKET_MAX_PER_SECOND,
+    fastBurst: BREAK_PACKET_BURST_LIMIT,
+    safePerSecond: BREAK_PACKET_SAFE_MAX_PER_SECOND,
+    safeBurst: BREAK_PACKET_SAFE_BURST_LIMIT,
+    burstWindowMs: BREAK_PACKET_BURST_WINDOW_MS,
+    targetCooldownMs: BREAK_PACKET_MIN_TARGET_COOLDOWN_MS,
+    pendingRetryMs: BREAK_PACKET_PENDING_RETRY_MS,
+    safeRepeats: BREAK_PACKET_SAFE_REPEATS
+  }
+
+  return baseLimits
+}
+
+function getPacketGovernorAggregate() {
+  const snapshots = [...packetGovernors.entries()].map(([botName, governor]) => ({
+    botName,
+    ...getPacketGovernorSnapshot(governor)
+  }))
+
+  const packetMode = snapshots.some(snapshot => snapshot.mode === 'safe')
+    ? 'safe'
+    : snapshots.some(snapshot => snapshot.mode === 'recovering')
+      ? 'recovering'
+      : ENABLE_ADAPTIVE_PACKET_GOVERNOR
+        ? 'fast'
+        : 'fixed'
+  const active = snapshots.find(snapshot => snapshot.mode === packetMode) || snapshots[0] || null
+
+  return {
+    packetMode,
+    lastReason: active?.lastReason || '',
+    incidentCount: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.incidentCount) || 0), 0),
+    safeRemainingMs: Math.max(0, ...snapshots.map(snapshot => Number(snapshot.safeRemainingMs) || 0))
+  }
+}
+
+function getMiningControllerAggregate(now = Date.now()) {
+  const snapshots = [...miningControllers.entries()].map(([botName, controller]) => ({
+    botName,
+    ...getMiningControllerSnapshot(controller, now)
+  }))
+
+  if (!snapshots.length) {
+    return {
+      sustainableRate: 0,
+      confirmationRatio: 1,
+      confirmLatencyMs: 0,
+      fallbackDigCount: 0,
+      pendingCount: 0,
+      stalePendingCleared: 0,
+      budgetScale: 1,
+      lastMiningBottleneck: ''
+    }
+  }
+
+  const totalAttempts = snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.window?.sentBreakAttempts) || 0), 0)
+  const totalConfirmed = snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.window?.confirmedPacketBreaks) || 0), 0)
+  const bottleneckSnapshot = [...snapshots]
+    .sort((a, b) => (Number(b.lastBottleneckAt) || 0) - (Number(a.lastBottleneckAt) || 0))[0]
+
+  return {
+    sustainableRate: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.sustainableRate) || 0), 0),
+    confirmationRatio: totalAttempts > 0 ? totalConfirmed / totalAttempts : Math.min(...snapshots.map(snapshot => Number(snapshot.confirmationRatio) || 1)),
+    confirmLatencyMs: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.confirmLatencyMs) || 0), 0) / snapshots.length,
+    fallbackDigCount: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.fallbackDigCount) || 0), 0),
+    pendingCount: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.pendingCount) || 0), 0),
+    stalePendingCleared: snapshots.reduce((sum, snapshot) => sum + (Number(snapshot.stalePendingCleared) || 0), 0),
+    budgetScale: Math.min(...snapshots.map(snapshot => Number(snapshot.budgetScale) || 1)),
+    lastMiningBottleneck: bottleneckSnapshot?.lastMiningBottleneck || ''
+  }
 }
 
 function classifyLogHealth(level, message) {
@@ -738,6 +912,10 @@ function getHealthLogLabel(reason) {
   if (reason === 'server-world-reset') return 'SERVER RESET'
   if (reason === 'runtime-stale') return 'BOT STALE'
   if (reason === 'speed-drop') return 'MINING SPEED'
+  if (reason === 'mining-confirmation') return 'MINING CONFIRMATION'
+  if (reason === 'packet-budget') return 'PACKET BUDGET'
+  if (reason === 'fallback-dig') return 'FALLBACK DIG'
+  if (reason === 'joining') return 'JOINING'
   if (reason === 'chat-captcha-hold') return 'BOTFILTER CHAT'
   if (reason === 'botfilter-hold') return 'BOTFILTER HOLD'
   return String(reason || 'HEALTH').toUpperCase()
@@ -892,6 +1070,17 @@ function buildRuntimeSnapshot() {
     .reduce((sum, bot) => sum + (bot.rawBlocksLastMinute || 0), 0)
   const currentRawRatePerSecond = Object.values(monitorData.bots)
     .reduce((sum, bot) => sum + (bot.rawBlocksPerSecond || 0), 0)
+  const currentPeakRatePerMinute = Object.keys(monitorData.bots)
+    .reduce((sum, botName) => sum + (Number(getSpeedGuardProfile(botName).peakRatePerMinute) || 0), 0)
+  const packetAggregate = getPacketGovernorAggregate()
+  const miningAggregate = getMiningControllerAggregate(now)
+  const governorEntries = [...packetGovernors.values()]
+  const firstController = [...miningControllers.values()][0] || createMiningController({ enabled: ENABLE_ADAPTIVE_MINING_CONTROLLER })
+  const packetBudget = getPacketGovernorLimits(
+    governorEntries[0] || createPacketGovernor({ enabled: ENABLE_ADAPTIVE_PACKET_GOVERNOR }),
+    getMiningControllerLimits(firstController, getPacketGovernorBaseLimits()),
+    now
+  )
   const health = updateHealthState(monitorData.health, {}, now)
   monitorData.health = health
 
@@ -909,6 +1098,35 @@ function buildRuntimeSnapshot() {
     currentEffectiveRatePerSecond: currentRatePerSecond,
     currentRawRatePerMinute,
     currentRawRatePerSecond,
+    performance: {
+      rawRate: currentRawRatePerMinute,
+      rawRatePerSecond: currentRawRatePerSecond,
+      effectiveRate: currentRatePerMinute,
+      effectiveRatePerSecond: currentRatePerSecond,
+      peakRate: currentPeakRatePerMinute,
+      sustainableRate: miningAggregate.sustainableRate,
+      confirmationRatio: miningAggregate.confirmationRatio,
+      confirmLatencyMs: miningAggregate.confirmLatencyMs,
+      packetMode: packetAggregate.packetMode,
+      packetBudget: {
+        perSecond: packetBudget.perSecond,
+        burst: packetBudget.burst,
+        burstWindowMs: packetBudget.burstWindowMs,
+        targetCooldownMs: packetBudget.targetCooldownMs,
+        pendingRetryMs: packetBudget.pendingRetryMs,
+        safeRemainingMs: packetAggregate.safeRemainingMs,
+        incidentCount: packetAggregate.incidentCount,
+        budgetScale: miningAggregate.budgetScale
+      },
+      fallbackDigCount: miningAggregate.fallbackDigCount,
+      pendingBreaks: miningAggregate.pendingCount,
+      stalePendingCleared: miningAggregate.stalePendingCleared,
+      lastMiningBottleneck: miningAggregate.lastMiningBottleneck,
+      lastSlowdownReason: packetAggregate.lastReason || (
+        miningAggregate.lastMiningBottleneck ||
+        (health.reason === 'speed-drop' ? health.diagnosis : '')
+      )
+    },
     health: {
       state: health.state,
       reason: health.reason,
@@ -918,7 +1136,8 @@ function buildRuntimeSnapshot() {
       diagnosis: health.diagnosis,
       lastNetworkError: health.lastNetworkError,
       lastReconnectReason: health.lastReconnectReason,
-      lastRecoveryAction: health.lastRecoveryAction
+      lastRecoveryAction: health.lastRecoveryAction,
+      timeline: getTimelineSnapshot(monitorData.timeline, { limit: 12 })
     },
     bots: Object.fromEntries(
       Object.entries(monitorData.bots).map(([botName, botData]) => [
@@ -932,6 +1151,13 @@ function buildRuntimeSnapshot() {
           effectiveBlocksPerSecond: botData.effectiveBlocksPerSecond || 0,
           rawBlocksLastMinute: botData.rawBlocksLastMinute || 0,
           rawBlocksPerSecond: botData.rawBlocksPerSecond || 0,
+          performance: {
+            rawRate: botData.rawBlocksLastMinute || 0,
+            effectiveRate: botData.effectiveBlocksLastMinute || botData.blocksLastMinute || 0,
+            peakRate: Number(getSpeedGuardProfile(botName).peakRatePerMinute) || 0,
+            packetMode: getPacketGovernorSnapshot(getPacketGovernor(botName), now).mode,
+            ...getMiningControllerSnapshot(getMiningController(botName), now)
+          },
           rateRecovering: Boolean(botData.rateRecovering),
           rateActiveSince: botData.rateActiveSince || 0,
           effectiveWindowMs: botData.effectiveWindowMs || 0,
@@ -975,6 +1201,15 @@ function addLog(level, botName, message) {
       message: cleanMessage,
       lastNetworkError: ['network-reset', 'dns-failure', 'connect-timeout'].includes(healthReason) ? cleanMessage : undefined,
       lastRecoveryAction: level === 'error' || level === 'warning' ? 'auto-recovery pending' : undefined
+    })
+  }
+  if (level === 'warning' || level === 'error') {
+    recordTimelineEvent({
+      type: 'log',
+      severity: level,
+      reason: healthReason || '',
+      botName,
+      message: cleanMessage
     })
   }
   
@@ -1052,6 +1287,9 @@ function addChatLog(botName, message, source = 'server-message', details = {}) {
     source,
     position: details.position,
     sender: details.sender,
+    packetName: details.packetName || 'message',
+    kind: details.kind,
+    evidence: details.evidence,
     message: text,
     rawMessage: message,
     time,
@@ -1293,7 +1531,9 @@ function checkAndRestartStuckBots() {
         const reconnectStuck = lifecycle.state === 'waiting-reconnect' &&
           lifecycle.ageMs > OFFLINE_WATCHDOG_MS &&
           (!reconnectPending || reconnectOverdue)
-        const lifecycleBusy = lifecycle.state === 'botfilter' || (lifecycle.state === 'waiting-reconnect' && !reconnectStuck)
+        const lifecycleBusy = lifecycle.state === 'botfilter' ||
+          lifecycle.state === 'held' ||
+          (lifecycle.state === 'waiting-reconnect' && !reconnectStuck)
         const recoverableStatus = botData.status === 'оффлайн' || botData.status === 'ожидание'
         
         if (
@@ -1585,6 +1825,8 @@ function gracefulShutdown(signal = 'SIGTERM', exitCode = 0) {
 function createBot(cfg) {
   const username = cfg.username
   const speedGuardProfile = getSpeedGuardProfile(username)
+  const packetGovernor = getPacketGovernor(username)
+  const miningController = getMiningController(username)
   const blocksToMine = cfg.blocksToMine
   const miningTargets = blocksToMine.map(({ x, y, z }) => vec3(x, y, z))
   const miningTargetKeys = new Set(blocksToMine.map(({ x, y, z }) => `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`))
@@ -1601,7 +1843,7 @@ function createBot(cfg) {
   let speedGuardTimer = null
   let fallCheckTimer = null, limboFallStartTimer = null, limboFallIntervalTimer = null, limboFallTimeoutTimer = null
   let keepAliveTimer = null, fullServerRetryTimer = null
-  let postJoinStartTimer = null, recreateRetryTimer = null, menuFlowWakeTimer = null
+  let postJoinStartTimer = null, recreateRetryTimer = null, menuFlowWakeTimer = null, postLimboMenuWatchdogTimer = null
   let entryButtonWatchdogTimer = null
   let joinedSubserver = false, lastDigTime = 0
   let spawnGraceUntil = 0, backoff = RECONNECT_REGULAR
@@ -1631,8 +1873,7 @@ function createBot(cfg) {
   let lastLimboPositionPacket = null
   let botFilterRetryCount = Number(botFilterRetryStates.get(username)?.retryCount) || 0
   let botFilterLastFailureAt = Number(botFilterRetryStates.get(username)?.lastFailureAt) || 0
-  let lifecycleState = 'connecting'
-  let lifecycleStateChangedAt = Date.now()
+  let lifecycle = createLifecycleState('connecting')
   let isRotating = false
   let lastKeepAlive = Date.now()
   let botHandle = null
@@ -1663,25 +1904,33 @@ function createBot(cfg) {
   }
 
   function setLifecycleState(nextState, source = 'unknown', details = {}) {
-    if (lifecycleState === nextState) return
-    const previousState = lifecycleState
-    lifecycleState = nextState
-    lifecycleStateChangedAt = Date.now()
+    const previousSnapshot = getLifecycleStateSnapshot(lifecycle)
+    const transition = transitionLifecycle(lifecycle, nextState, source, details)
+    lifecycle = transition.lifecycle
+    if (!transition.changed) return
+    const snapshot = getLifecycleStateSnapshot(lifecycle)
+    recordTimelineEvent({
+      type: 'lifecycle',
+      severity: 'info',
+      botName: username,
+      reason: snapshot.state,
+      source,
+      message: `${previousSnapshot.state} -> ${snapshot.state}`
+    })
     diagEvent('lifecycle-state', {
-      previousState,
-      state: lifecycleState,
+      previousState: previousSnapshot.state,
+      state: snapshot.state,
       source,
       ...details
     })
   }
 
   function getLifecycleSnapshot() {
-    return {
-      state: lifecycleState,
-      ageMs: Date.now() - lifecycleStateChangedAt
-    }
+    return getLifecycleStateSnapshot(lifecycle)
   }
   let packetOnlyStartedAt = 0
+  let lastMiningControllerLogAt = 0
+  let miningLoopSoftRestartRequested = false
   let speedGuardStartedAt = 0
   let speedGuardLowSince = 0
   let speedGuardLastRecoveryAt = 0
@@ -1747,7 +1996,10 @@ function createBot(cfg) {
   }
 
   function getPacketSafetyRemaining() {
-    return Math.max(0, (packetSafetyCooldowns.get(username) || 0) - Date.now())
+    const now = Date.now()
+    const forcedRemaining = Math.max(0, (packetSafetyCooldowns.get(username) || 0) - now)
+    const governorRemaining = getPacketGovernorSnapshot(packetGovernor, now).safeRemainingMs
+    return Math.max(forcedRemaining, governorRemaining)
   }
 
   function isPacketSafetyModeActive() {
@@ -1755,14 +2007,22 @@ function createBot(cfg) {
   }
 
   function getBreakPacketLimits() {
-    const safeMode = isPacketSafetyModeActive()
+    const now = Date.now()
+    const forcedSafeMode = Math.max(0, (packetSafetyCooldowns.get(username) || 0) - now) > 0
+    const adaptiveBaseLimits = getMiningControllerLimits(miningController, getPacketGovernorBaseLimits())
+    const governorLimits = getPacketGovernorLimits(packetGovernor, adaptiveBaseLimits, now)
+    const safeMode = forcedSafeMode || governorLimits.mode === 'safe'
     return {
       safeMode,
-      perSecond: safeMode ? BREAK_PACKET_SAFE_MAX_PER_SECOND : BREAK_PACKET_MAX_PER_SECOND,
-      burstWindowMs: BREAK_PACKET_BURST_WINDOW_MS,
-      burst: safeMode ? BREAK_PACKET_SAFE_BURST_LIMIT : BREAK_PACKET_BURST_LIMIT,
-      targetCooldownMs: BREAK_PACKET_MIN_TARGET_COOLDOWN_MS,
-      pendingRetryMs: BREAK_PACKET_PENDING_RETRY_MS
+      packetMode: forcedSafeMode ? 'safe' : governorLimits.mode,
+      perSecond: forcedSafeMode ? BREAK_PACKET_SAFE_MAX_PER_SECOND : governorLimits.perSecond,
+      burstWindowMs: governorLimits.burstWindowMs,
+      burst: forcedSafeMode ? BREAK_PACKET_SAFE_BURST_LIMIT : governorLimits.burst,
+      targetCooldownMs: governorLimits.targetCooldownMs,
+      pendingRetryMs: governorLimits.pendingRetryMs,
+      repeatsLimit: forcedSafeMode ? BREAK_PACKET_SAFE_REPEATS : governorLimits.repeatsLimit,
+      safeRemainingMs: getPacketSafetyRemaining(),
+      lastReason: governorLimits.lastReason || ''
     }
   }
 
@@ -1771,22 +2031,35 @@ function createBot(cfg) {
     const currentUntil = packetSafetyCooldowns.get(username) || 0
     const until = Math.max(currentUntil, now + BREAK_PACKET_SAFE_MODE_MS)
     packetSafetyCooldowns.set(username, until)
+    recordPacketIncident(packetGovernor, reason, {
+      now,
+      safeModeMs: BREAK_PACKET_SAFE_MODE_MS,
+      recoveryMs: PACKET_GOVERNOR_RECOVERY_MS
+    })
+    recordMiningPacketIncident(miningController, reason, { now })
     breakPacketSecondWindowStartedAt = 0
     breakPacketSecondWindowCount = 0
     breakPacketBurstWindowStartedAt = 0
     breakPacketBurstWindowCount = 0
 
     addLog('warning', username, `Packet-safe режим ${Math.ceil((until - now) / 60000)}м: ${reason}`)
+    recordTimelineEvent({
+      type: 'packet-budget',
+      severity: 'warning',
+      botName: username,
+      reason,
+      message: `Packet-safe: ${reason}`
+    })
     diagEvent('packet-safe-mode-activated', { reason, until, limits: getBreakPacketLimits() })
   }
 
   function getEffectiveBreakPacketRepeats(repeats) {
     const value = Math.max(1, Number(repeats) || 1)
-    if (isPacketSafetyModeActive()) {
-      return Math.min(value, BREAK_PACKET_SAFE_REPEATS)
+    const limits = getBreakPacketLimits()
+    if (Number.isFinite(limits.repeatsLimit)) {
+      return Math.min(value, limits.repeatsLimit)
     }
 
-    const limits = getBreakPacketLimits()
     const secondPressure = limits.perSecond > 0 ? breakPacketSecondWindowCount / limits.perSecond : 0
     const burstPressure = limits.burst > 0 ? breakPacketBurstWindowCount / limits.burst : 0
     const pressure = Math.max(secondPressure, burstPressure)
@@ -1858,16 +2131,39 @@ function createBot(cfg) {
     lastBreakPacketByTarget.set(getPositionKey(position), Date.now())
   }
 
-  function prunePacketBreakTracking(now = Date.now()) {
-    const packetTtl = PACKET_BREAK_CONFIRM_WINDOW_MS * 2
+  function prunePacketBreakTracking(now = Date.now(), options = {}) {
+    const packetTtl = Math.max(
+      50,
+      Number(options.packetTtl ?? (PACKET_BREAK_CONFIRM_WINDOW_MS * 2)) || (PACKET_BREAK_CONFIRM_WINDOW_MS * 2)
+    )
+    let stalePending = 0
     for (const [key, sentAt] of pendingPacketBreaks) {
-      if (now - sentAt > packetTtl) pendingPacketBreaks.delete(key)
+      if (now - sentAt > packetTtl) {
+        pendingPacketBreaks.delete(key)
+        stalePending += 1
+      }
     }
 
     const countTtl = Math.max(1000, BLOCK_COUNT_DEDUPE_MS * 20)
     for (const [key, countedAt] of lastCountedBlockByTarget) {
       if (now - countedAt > countTtl) lastCountedBlockByTarget.delete(key)
     }
+
+    const controllerStale = pruneMiningControllerPending(miningController, {
+      now,
+      stalePendingMs: Math.min(packetTtl, MINING_CONTROLLER_STALE_PENDING_MS)
+    })
+
+    if (stalePending > 0 || controllerStale > 0) {
+      diagEvent('packet-break-stale-pending-cleared', {
+        stalePending,
+        controllerStale,
+        packetTtl,
+        pendingBreaks: pendingPacketBreaks.size
+      })
+    }
+
+    return stalePending + controllerStale
   }
 
   function markPacketBreakAttempt(position) {
@@ -1902,7 +2198,16 @@ function createBot(cfg) {
       }
 
       lastCountedBlockByTarget.set(key, now)
+      if (source === 'packet') {
+        recordBreakPacketConfirmed(miningController, { positionKey: key, now })
+      }
       pendingPacketBreaks.delete(key)
+    }
+
+    if (source === 'dig') {
+      recordFallbackDig(miningController, { now })
+    } else if (source === 'packet') {
+      resetMiningControllerRecovery(miningController)
     }
 
     lastDigTime = now
@@ -1938,6 +2243,42 @@ function createBot(cfg) {
     return lastProgressAt > 0 ? now - lastProgressAt : Infinity
   }
 
+  async function recoverPacketOnlyPipeline(expectedSessionEpoch, reason = 'packet-only-idle') {
+    if (!PACKET_ONLY_MINING || !isMiningSessionReady(expectedSessionEpoch)) {
+      return false
+    }
+
+    const now = Date.now()
+    const staleCleared = prunePacketBreakTracking(now, {
+      packetTtl: Math.min(PACKET_BREAK_CONFIRM_WINDOW_MS, MINING_CONTROLLER_STALE_PENDING_MS)
+    })
+    lastBreakPacketByTarget.clear()
+    await ensureMiningLookAt(true)
+    if (!isMiningSessionReady(expectedSessionEpoch)) return false
+
+    const burstPackets = await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 350))
+    recordPacketOnlySoftRecovery(miningController, {
+      now,
+      reason,
+      staleCleared,
+      burstPackets
+    })
+    evaluateAdaptiveMiningController(reason, { force: true, now: Date.now() })
+
+    if (burstPackets > 0) {
+      packetOnlyStartedAt = Date.now()
+      diagEvent('packet-only-soft-recovery', {
+        reason,
+        burstPackets,
+        staleCleared,
+        snapshot: getMiningControllerSnapshot(miningController)
+      })
+      return true
+    }
+
+    return false
+  }
+
   function hasRecentMiningProgress(windowMs = POSITION_FAR_RECONNECT_IDLE_MS) {
     return getMiningProgressAgeMs() <= windowMs
   }
@@ -1956,6 +2297,77 @@ function createBot(cfg) {
       activeSince: botData.rateActiveSince || 0
     })
     return Number.isFinite(stats.effectiveRatePerMinute) ? stats.effectiveRatePerMinute : 0
+  }
+
+  function getMiningBottleneckHealthReason(bottleneck = '') {
+    const normalized = String(bottleneck || '').toLowerCase()
+    if (normalized.includes('confirmation') || normalized.includes('pending')) return 'mining-confirmation'
+    if (normalized.includes('packet-budget') || normalized.includes('too many')) return 'packet-budget'
+    if (normalized.includes('fallback')) return 'fallback-dig'
+    return 'speed-drop'
+  }
+
+  function evaluateAdaptiveMiningController(source = 'mining-loop', options = {}) {
+    const now = Number(options.now) || Date.now()
+    const result = evaluateMiningController(miningController, {
+      now,
+      force: options.force === true
+    })
+    const snapshot = result.snapshot || getMiningControllerSnapshot(miningController, now)
+
+    if (result.changed) {
+      diagEvent('adaptive-mining-controller', {
+        source,
+        changed: result.changed,
+        previousScale: result.previousScale,
+        nextScale: result.nextScale,
+        bottleneck: result.bottleneck,
+        snapshot
+      })
+    }
+
+    const bottleneck = result.bottleneck || snapshot.lastMiningBottleneck
+    if (
+      result.changed &&
+      bottleneck &&
+      !['stable', 'learning'].includes(bottleneck) &&
+      now - lastMiningControllerLogAt >= 30000
+    ) {
+      lastMiningControllerLogAt = now
+      const healthReason = getMiningBottleneckHealthReason(bottleneck)
+      const budgetPercent = Math.round((snapshot.budgetScale || 1) * 100)
+      const confirmationPercent = Math.round((snapshot.confirmationRatio || 0) * 100)
+      setRuntimeHealth(healthReason, {
+        lastRecoveryAction: 'adaptive mining controller',
+        diagnosis: `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%.`
+      })
+      addLog(
+        'warning',
+        username,
+        `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%`
+      )
+    }
+
+    return snapshot
+  }
+
+  function requestSoftMiningRestart(reason = 'speed-guard') {
+    if (!digLoopRunning || miningLoopSoftRestartRequested || !isMiningSessionReady(sessionEpoch)) {
+      return false
+    }
+
+    miningLoopSoftRestartRequested = true
+    packetOnlyStartedAt = 0
+    pendingPacketBreaks.clear()
+    lastBreakPacketByTarget.clear()
+    resetMiningControllerRecovery(miningController)
+    resetSpeedGuardGrace('soft-mining-restart')
+    setRuntimeHealth('speed-drop', {
+      lastRecoveryAction: 'soft mining restart',
+      diagnosis: 'Speed-guard перезапускает mining loop без полного reconnect.'
+    })
+    addLog('warning', username, `Speed-guard: soft restart mining loop (${reason})`)
+    return true
   }
 
   function getSpeedGuardPeak() {
@@ -2028,6 +2440,9 @@ function createBot(cfg) {
     const unloadedTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
     const activeProgress = Number.isFinite(idleFor) && idleFor < Math.min(buttonIdleMs, noProgressReconnectMs)
     const speedDropExceeded = targetRate > 0 && currentRate < targetRate
+    const sustainedLowMs = speedGuardLowSince > 0
+      ? Math.max(0, now - speedGuardLowSince)
+      : 0
     if (activeProgress && !emptyTargets && !unloadedTargets && digLoopRunning && !speedDropExceeded) {
       diagEvent('speed-guard-active-progress-hold', {
         currentRate,
@@ -2044,6 +2459,17 @@ function createBot(cfg) {
     speedGuardLastRecoveryAt = now
     speedGuardRecoveries += 1
     const recoveryAttempt = Math.min(speedGuardRecoveries, SPEED_GUARD_RECONNECT_AFTER_RECOVERIES)
+    const shouldReconnectForSpeedDrop = shouldEscalateSpeedDrop({
+      currentRate,
+      targetRate,
+      recoveries: speedGuardRecoveries,
+      reconnectAfterRecoveries: SPEED_GUARD_RECONNECT_AFTER_RECOVERIES,
+      sustainedLowMs,
+      sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
+      idleFor,
+      noProgressReconnectMs,
+      severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO
+    })
     const rateText = `${Math.round(currentRate)}<${Math.round(targetRate)} б/м`
     const shouldLogRecoveryWarning =
       emptyTargets ||
@@ -2075,6 +2501,10 @@ function createBot(cfg) {
       speedDropExceeded,
       allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
       recoveries: speedGuardRecoveries,
+      sustainedLowMs,
+      sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
+      severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO,
+      shouldReconnectForSpeedDrop,
       emptyTargets,
       unloadedTargets,
       targets: snapshot?.all?.map(formatTargetSnapshot)
@@ -2102,9 +2532,10 @@ function createBot(cfg) {
       return
     }
 
-    packetOnlyStartedAt = 0
-    pendingPacketBreaks.clear()
-    lastBreakPacketByTarget.clear()
+    prunePacketBreakTracking(now, {
+      packetTtl: Math.min(PACKET_BREAK_CONFIRM_WINDOW_MS, MINING_CONTROLLER_STALE_PENDING_MS)
+    })
+    evaluateAdaptiveMiningController('speed-guard', { force: true, now })
 
     if (!digLoopRunning && isEntryButtonPressedForCurrentJoin()) {
       addLog('warning', username, 'Speed-guard: mining loop не активен, запускаю заново')
@@ -2112,16 +2543,39 @@ function createBot(cfg) {
       return
     }
 
+    if (speedGuardRecoveries === 1) {
+      const recovered = await recoverPacketOnlyPipeline(expectedSessionEpoch, 'speed-guard-rescan')
+      if (recovered && !shouldReconnectForSpeedDrop) {
+        return
+      }
+    }
+
+    if (
+      speedGuardRecoveries >= SPEED_GUARD_SOFT_RESTART_AFTER_RECOVERIES &&
+      speedGuardRecoveries < SPEED_GUARD_RECONNECT_AFTER_RECOVERIES &&
+      !shouldReconnectForSpeedDrop
+    ) {
+      if (requestSoftMiningRestart('speed-drop')) {
+        return
+      }
+    }
+
     await ensureMiningLookAt(true)
     if (!isMiningSessionReady(expectedSessionEpoch)) return
 
     const burstPackets = await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 900))
-    if (burstPackets > 0) {
-      resetSpeedGuardLowState()
+    if (burstPackets > 0 && !shouldReconnectForSpeedDrop) {
+      diagEvent('speed-guard-soft-recovery-burst', {
+        burstPackets,
+        currentRate,
+        targetRate,
+        recoveries: speedGuardRecoveries,
+        sustainedLowMs
+      })
       return
     }
 
-    if (Number.isFinite(idleFor) && idleFor < noProgressReconnectMs) {
+    if (Number.isFinite(idleFor) && idleFor < noProgressReconnectMs && !shouldReconnectForSpeedDrop) {
       diagEvent('speed-guard-reconnect-skipped-active-progress', {
         currentRate,
         targetRate,
@@ -2133,10 +2587,15 @@ function createBot(cfg) {
     }
 
     if (
+      shouldReconnectForSpeedDrop ||
       speedGuardRecoveries >= SPEED_GUARD_RECONNECT_AFTER_RECOVERIES ||
       (Number.isFinite(idleFor) && idleFor >= noProgressReconnectMs)
     ) {
-      addLog('warning', username, 'Speed-guard: мягкое восстановление не помогло -> быстрый перезаход')
+      addLog(
+        'warning',
+        username,
+        `Speed-guard: мягкое восстановление не помогло (${Math.round(sustainedLowMs / 1000)}с ниже цели) -> быстрый перезаход`
+      )
       updateBotStatus(username, 'ожидание')
       scheduleReconnectLocal(2000, true, 'speed-guard-low-rate')
     }
@@ -2244,6 +2703,8 @@ function createBot(cfg) {
       noProgressReconnectMs: getSpeedGuardNoProgressReconnectMs(),
       targetRatio: SPEED_GUARD_TARGET_RATIO,
       allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
+      sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
+      severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO,
       peakRate: getSpeedGuardPeak()
     })
   }
@@ -2253,11 +2714,11 @@ function createBot(cfg) {
     menuStage = stage
     menuStageStartedAt = Date.now()
     if (stage === 'chat-captcha-hold') {
-      setLifecycleState('botfilter', source, { menuStage: stage })
+      setLifecycleState('held', source, { menuStage: stage })
     } else if (stage === 'joined') {
       setLifecycleState('joining', source, { menuStage: stage })
     } else if (stage !== 'idle') {
-      setLifecycleState('menu', source, { menuStage: stage })
+      setLifecycleState('joining', source, { menuStage: stage })
     }
     diagEvent('menu-stage', { stage, source })
   }
@@ -2392,6 +2853,8 @@ function createBot(cfg) {
   }
 
   function beginSubserverJoin() {
+    try { if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer) } catch(e){}
+    postLimboMenuWatchdogTimer = null
     joinedSubserver = true
     subserverJoinSeq += 1
     menuRecoveryCount = 0
@@ -2569,6 +3032,12 @@ function createBot(cfg) {
       }
       markBreakPacketTargetSent(location)
       markPacketBreakAttempt(location)
+      recordBreakPacketsSent(miningController, {
+        positionKey: getPositionKey(location),
+        packetCount: sentPairs * 2,
+        attempts: 1,
+        now: Date.now()
+      })
       return true
     } catch (error) {
       return false
@@ -3425,6 +3894,8 @@ function createBot(cfg) {
     lastLimboPositionPacket = null
     try { if (limboFallStartTimer) clearTimeout(limboFallStartTimer) } catch(e){}
     limboFallStartTimer = null
+    try { if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer) } catch(e){}
+    postLimboMenuWatchdogTimer = null
     lastMiningDiagnosticAt = 0
     lastEmptyTargetsLogAt = 0
     lastMiningLookAt = 0
@@ -3438,6 +3909,8 @@ function createBot(cfg) {
     speedGuardLowSince = 0
     speedGuardRecoveries = 0
     speedGuardCheckRunning = false
+    lastMiningControllerLogAt = 0
+    miningLoopSoftRestartRequested = false
     setMenuStage('idle', 'reset-session')
     packetOnlyStartedAt = 0
     breakPacketSecondWindowStartedAt = 0
@@ -3474,6 +3947,7 @@ function createBot(cfg) {
     try { if (postJoinStartTimer) clearTimeout(postJoinStartTimer) } catch(e){}
     try { if (entryButtonWatchdogTimer) clearTimeout(entryButtonWatchdogTimer) } catch(e){}
     try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch(e){}
+    try { if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer) } catch(e){}
     try { if (speedGuardTimer) clearInterval(speedGuardTimer) } catch(e){}
     try { restoreLimboPhysics(source) } catch(e){}
 
@@ -3489,6 +3963,7 @@ function createBot(cfg) {
     postJoinStartTimer = null
     entryButtonWatchdogTimer = null
     menuFlowWakeTimer = null
+    postLimboMenuWatchdogTimer = null
     speedGuardTimer = null
     menuFlowWakeDueAt = 0
     menuFlowRunning = false
@@ -3514,6 +3989,7 @@ function createBot(cfg) {
     try { if (entryButtonWatchdogTimer) clearTimeout(entryButtonWatchdogTimer) } catch(e){}
     try { if (recreateRetryTimer) clearTimeout(recreateRetryTimer) } catch(e){}
     try { if (menuFlowWakeTimer) clearTimeout(menuFlowWakeTimer) } catch(e){}
+    try { if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer) } catch(e){}
     try { if (speedGuardTimer) clearInterval(speedGuardTimer) } catch(e){}
     try { restoreLimboPhysics('cleanup') } catch(e){}
     menuTimer = null
@@ -3531,6 +4007,7 @@ function createBot(cfg) {
     entryButtonWatchdogTimer = null
     recreateRetryTimer = null
     menuFlowWakeTimer = null
+    postLimboMenuWatchdogTimer = null
     speedGuardTimer = null
     menuFlowWakeDueAt = 0
     menuFlowRunning = false
@@ -4065,7 +4542,7 @@ function createBot(cfg) {
     fallCheckPassed = true
     fallCheckActive = false
     initialY = null
-    setLifecycleState('menu', source, { limboComplete: true })
+    setLifecycleState('joining', source, { limboComplete: true })
     diagEvent('limbo-complete-local', { source, ...details })
   }
 
@@ -4529,11 +5006,14 @@ function createBot(cfg) {
           title: String(bot.currentWindow.title || '').slice(0, 160)
         }
       : null
+    const postLimboStuck = reason === 'post-limbo-menu-stuck'
 
     addLog(
       'warning',
       username,
-      `Вход завис в лобби (${menuAttempts}/${MENU_ATTEMPT_LIMIT}) - быстрый перезаход через ${Math.round(delay / 1000)}с`
+      postLimboStuck
+        ? `Вход после Limbo завис - быстрый перезаход через ${Math.round(delay / 1000)}с`
+        : `Вход завис в лобби (${menuAttempts}/${MENU_ATTEMPT_LIMIT}) - быстрый перезаход через ${Math.round(delay / 1000)}с`
     )
     diagEvent('menu-fast-recovery', {
       reason,
@@ -4548,6 +5028,45 @@ function createBot(cfg) {
     lastMenuOpenAttemptAt = 0
     updateBotStatus(username, 'ожидание')
     rescheduleReconnectLocal(delay, reason)
+  }
+
+  function schedulePostLimboMenuWatchdog(expectedSessionEpoch, source = 'limbo-success') {
+    try { if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer) } catch(e){}
+    postLimboMenuWatchdogTimer = null
+
+    if (joinedSubserver || hasReconnectPendingLocal() || POST_LIMBO_MENU_WATCHDOG_MS <= 0) return
+
+    postLimboMenuWatchdogTimer = setTimeout(() => {
+      postLimboMenuWatchdogTimer = null
+      if (
+        !isCurrentSession(expectedSessionEpoch) ||
+        joinedSubserver ||
+        hasReconnectPendingLocal() ||
+        shuttingDown ||
+        !runtimeEnabled ||
+        scannerHoldUntil > Date.now() ||
+        scannerWaitChallengeActive ||
+        waitingForFall ||
+        fallCheckActive
+      ) {
+        return
+      }
+
+      diagEvent('post-limbo-menu-watchdog', {
+        source,
+        menuStage,
+        menuAttempts,
+        isOnline,
+        currentWindow: bot?.currentWindow
+          ? {
+              id: bot.currentWindow.id,
+              type: bot.currentWindow.type,
+              title: String(bot.currentWindow.title || '').slice(0, 160)
+            }
+          : null
+      })
+      scheduleMenuRecovery('post-limbo-menu-stuck')
+    }, POST_LIMBO_MENU_WATCHDOG_MS)
   }
 
   function handleTooManyPacketsNotice(source, rawText = '') {
@@ -4727,7 +5246,7 @@ function createBot(cfg) {
     return decision.delay
   }
 
-  function handleScannerWaitChallenge(rawText, source = 'server-message') {
+  function handleScannerWaitChallenge(rawText, source = 'server-message', evidence = null) {
     if (joinedSubserver || hasReconnectPendingLocal()) return
     const challengeSessionEpoch = sessionEpoch
     setLifecycleState('botfilter', source, { challenge: 'fall-wait' })
@@ -4750,6 +5269,14 @@ function createBot(cfg) {
       recentPositionAgeMs <= SCANNER_RECENT_POSITION_MS
     )
     addLog('warning', username, `BotFilter: тип проверки = fall-проверка, жду position-пакет до ${Math.round(waitMs / 1000)}с`)
+    recordTimelineEvent({
+      type: 'botfilter',
+      severity: 'warning',
+      botName: username,
+      reason: 'fall-wait',
+      source,
+      message: evidence?.text || rawText
+    })
     diagEvent('bot-filter-classified', {
       type: 'fall-wait',
       source,
@@ -4758,6 +5285,7 @@ function createBot(cfg) {
       recentPositionWindowMs: SCANNER_RECENT_POSITION_MS,
       recentPositionAgeMs: Number.isFinite(recentPositionAgeMs) ? recentPositionAgeMs : null,
       recentPosition: lastLimboPositionPacket,
+      evidence,
       text: String(rawText || '').slice(0, 500)
     })
 
@@ -4823,9 +5351,9 @@ function createBot(cfg) {
     }, waitMs)
   }
 
-  function handleChatCaptchaChallenge(rawText, source = 'server-message') {
+  function handleChatCaptchaChallenge(rawText, source = 'server-message', evidence = null) {
     const now = Date.now()
-    setLifecycleState('botfilter', source, { challenge: 'chat-captcha' })
+    setLifecycleState('held', source, { challenge: 'chat-captcha' })
     setRuntimeHealth('chat-captcha-hold', {
       lastRecoveryAction: '30-minute captcha hold',
       diagnosis: `Чат-капча обнаружена, бот ждёт ${Math.round(CHAT_CAPTCHA_RECONNECT_MS / 60000)} минут перед новым входом.`
@@ -4840,7 +5368,16 @@ function createBot(cfg) {
     diagEvent('chat-captcha-reconnect-hold', {
       source,
       holdMs: scannerHoldUntil - now,
+      evidence,
       text: String(rawText || '').slice(0, 500)
+    })
+    recordTimelineEvent({
+      type: 'botfilter',
+      severity: 'error',
+      botName: username,
+      reason: 'chat-captcha',
+      source,
+      message: evidence?.text || rawText
     })
 
     if (!hasReconnectPendingLocal()) {
@@ -5399,13 +5936,6 @@ function createBot(cfg) {
           return
         }
 
-        if (isVisibleChatMessage) {
-          addChatLog(username, rawText, messageSource, {
-            position: messagePosition,
-            sender: sender ? String(sender) : undefined
-          })
-        }
-
         if (LOG_SERVER_MESSAGES) {
           diagEvent('server-message', {
             source: messageSource,
@@ -5415,6 +5945,31 @@ function createBot(cfg) {
           })
         }
         const text = rawText.toLowerCase()
+        const botFilterMessageKind = !joinedSubserver
+          ? classifyBotFilterMessage(text)
+          : 'none'
+        const botFilterEvidence = botFilterMessageKind !== 'none'
+          ? createCaptchaEvidence({
+              kind: botFilterMessageKind,
+              text: rawText,
+              source: messageSource,
+              position: messagePosition,
+              visibleChat: isVisibleChatMessage,
+              sender: sender ? String(sender) : '',
+              packetName: 'message',
+              packetSeen: true
+            })
+          : null
+
+        if (isVisibleChatMessage) {
+          addChatLog(username, rawText, messageSource, {
+            position: messagePosition,
+            sender: sender ? String(sender) : undefined,
+            packetName: 'message',
+            kind: botFilterMessageKind !== 'none' ? botFilterMessageKind : undefined,
+            evidence: botFilterEvidence || undefined
+          })
+        }
 
         if (isTooManyPacketsText(text)) {
           handleTooManyPacketsNotice(messageSource, rawText)
@@ -5424,8 +5979,6 @@ function createBot(cfg) {
         maybeSendLoginCommand(rawText, text)
 
         if (!joinedSubserver) {
-          const botFilterMessageKind = classifyBotFilterMessage(text)
-
           if (botFilterMessageKind !== 'none') {
             addLog(
               'info',
@@ -5438,14 +5991,16 @@ function createBot(cfg) {
               position: messagePosition,
               visibleChat: isVisibleChatMessage,
               sender: sender ? String(sender) : undefined,
+              evidence: botFilterEvidence,
               text: rawText.slice(0, 1000),
               json: messageJson
             })
           }
 
           if (botFilterMessageKind === 'chat-captcha') {
-            if (isVisibleChatMessage) {
-              handleChatCaptchaChallenge(rawText, messageSource)
+            const validatedEvidence = validateCaptchaEvidence(botFilterEvidence, 'chat-captcha')
+            if (validatedEvidence.valid) {
+              handleChatCaptchaChallenge(rawText, messageSource, validatedEvidence)
               return
             }
 
@@ -5453,6 +6008,7 @@ function createBot(cfg) {
               source: messageSource,
               position: messagePosition,
               visibleChat: isVisibleChatMessage,
+              evidence: validatedEvidence,
               fallCheckActive,
               waitingForFall,
               scannerWaitChallengeActive,
@@ -5462,7 +6018,17 @@ function createBot(cfg) {
           }
 
           if (botFilterMessageKind === 'fall-wait') {
-            handleScannerWaitChallenge(rawText, messageSource)
+            const validatedEvidence = validateCaptchaEvidence(botFilterEvidence, 'fall-wait')
+            if (!validatedEvidence.valid) {
+              diagEvent('fall-wait-ignored', {
+                source: messageSource,
+                position: messagePosition,
+                evidence: validatedEvidence,
+                text: rawText.slice(0, 500)
+              })
+              return
+            }
+            handleScannerWaitChallenge(rawText, messageSource, validatedEvidence)
             return
           }
         }
@@ -5482,25 +6048,35 @@ function createBot(cfg) {
         }
         
         if (!joinedSubserver && isLimboSuccessText(text)) {
+          const trackedSuccess = text.includes('отслеживается') || text.includes('проверка завершена')
+          const successSessionEpoch = sessionEpoch
           limboSuccessSeen = true
           scannerHoldUntil = 0
           scannerWaitChallengeActive = false
+          waitingForFall = false
+          fallCheckActive = false
           stopFullServerRetry()
           completeLimboWait('limbo-success-message')
+          setRuntimeHealth('joining', {
+            lastRecoveryAction: 'limbo passed',
+            diagnosis: trackedSuccess
+              ? 'LimboFilter пройден, сервер перевёл бота на подсервер.'
+              : 'LimboFilter пройден, бот входит на подсервер через меню.'
+          })
           waitKickCount = 0
           updateBotStatus(username, 'ожидание')
-          try { if (menuTimer) clearTimeout(menuTimer) } catch(e){}
           try { if (fallCheckTimer) clearTimeout(fallCheckTimer) } catch(e){}
           
-          waitingForFall = false
           fallCheckPassed = true
 
-          if (text.includes('отслеживается') || text.includes('проверка завершена')) {
+          if (trackedSuccess) {
             beginSubserverJoin()
             addLog('success', username, 'Зашёл на подсервер')
             schedulePostJoinFlow()
           } else {
-            addLog('success', username, 'LimboFilter пройден, жду перевод сервера')
+            addLog('success', username, 'LimboFilter пройден, запускаю вход через меню')
+            queueMenuFlow('limbo-success-menu', 250)
+            schedulePostLimboMenuWatchdog(successSessionEpoch, 'limbo-success-menu')
           }
         }
       } catch (e) {
@@ -5701,6 +6277,11 @@ function createBot(cfg) {
       let lastHealthCheckAt = readyAt
 
       while (isMiningSessionReady(expectedSessionEpoch)) {
+        if (miningLoopSoftRestartRequested) {
+          diagEvent('mining-loop-soft-restart-break', { expectedSessionEpoch })
+          return
+        }
+
         if (diggingPaused) {
           lastDigTime = Date.now()
           await sleep(500)
@@ -5716,6 +6297,8 @@ function createBot(cfg) {
         if (now - lastHealthCheckAt >= 5000) {
           lastHealthCheckAt = now
           diagPositionSnapshot('mining-loop')
+          prunePacketBreakTracking(now)
+          evaluateAdaptiveMiningController('mining-loop', { now })
 
           if (RESTART_IF_IDLE_MS > 0 && now - lastDigTime > RESTART_IF_IDLE_MS) {
             addLog('warning', username, 'Долгий простой -> перезапуск')
@@ -5769,12 +6352,33 @@ function createBot(cfg) {
                 packetOnlyStartedAt = packetNow
               }
 
-              if (getPacketOnlyIdleMs(packetNow) < PACKET_ONLY_FALLBACK_MS) {
+              const packetOnlyIdleMs = getPacketOnlyIdleMs(packetNow)
+              const recoveryDecision = getPacketOnlyRecoveryDecision(miningController, {
+                now: packetNow,
+                idleMs: packetOnlyIdleMs,
+                fallbackMs: PACKET_ONLY_FALLBACK_MS
+              })
+
+              if (recoveryDecision.action === 'wait') {
                 continue
+              }
+
+              if (recoveryDecision.action === 'soft-recovery') {
+                const recovered = await recoverPacketOnlyPipeline(expectedSessionEpoch, recoveryDecision.reason)
+                if (recovered) {
+                  cursor = (cursor + 1) % miningTargets.length
+                  continue
+                }
               }
 
               packetOnlyStartedAt = packetNow
               packetOnlyFallbackThisPass = true
+              diagEvent('packet-only-fallback-dig', {
+                reason: recoveryDecision.reason,
+                packetOnlyIdleMs,
+                decision: recoveryDecision,
+                snapshot: getMiningControllerSnapshot(miningController, packetNow)
+              })
             }
           }
         }
@@ -5786,12 +6390,33 @@ function createBot(cfg) {
           packetOnlyStartedAt
         ) {
           const packetNow = Date.now()
-          if (getPacketOnlyIdleMs(packetNow) < PACKET_ONLY_FALLBACK_MS) {
+          const packetOnlyIdleMs = getPacketOnlyIdleMs(packetNow)
+          const recoveryDecision = getPacketOnlyRecoveryDecision(miningController, {
+            now: packetNow,
+            idleMs: packetOnlyIdleMs,
+            fallbackMs: PACKET_ONLY_FALLBACK_MS
+          })
+
+          if (recoveryDecision.action === 'wait') {
             await sleep(MINING_LOOP_IDLE_MS)
             continue
           }
 
+          if (recoveryDecision.action === 'soft-recovery') {
+            const recovered = await recoverPacketOnlyPipeline(expectedSessionEpoch, recoveryDecision.reason)
+            if (recovered) {
+              cursor = (cursor + 1) % miningTargets.length
+              continue
+            }
+          }
+
           packetOnlyStartedAt = packetNow
+          diagEvent('packet-only-fallback-dig', {
+            reason: recoveryDecision.reason,
+            packetOnlyIdleMs,
+            decision: recoveryDecision,
+            snapshot: getMiningControllerSnapshot(miningController, packetNow)
+          })
         }
 
         for (const target of batch) {
@@ -5855,7 +6480,22 @@ function createBot(cfg) {
       diagEvent('mining-loop-error', { error })
       scheduleReconnectLocal(undefined, false, 'mining-loop-error')
     } finally {
+      const shouldSoftRestart = miningLoopSoftRestartRequested &&
+        isCurrentSession(expectedSessionEpoch) &&
+        joinedSubserver &&
+        bot &&
+        !hasReconnectPendingLocal() &&
+        !shuttingDown &&
+        runtimeEnabled
       digLoopRunning = false
+      if (shouldSoftRestart) {
+        miningLoopSoftRestartRequested = false
+        setTimeout(() => {
+          startDiggingLoop(expectedSessionEpoch).catch(() => {})
+        }, 50)
+      } else if (miningLoopSoftRestartRequested) {
+        miningLoopSoftRestartRequested = false
+      }
     }
   }
 

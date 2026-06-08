@@ -93,7 +93,7 @@ const LEGACY_CONFIG_RULES = [
   { path: 'timing.speedGuardLowRateMs', legacyValue: 25000, fallback: 10000 },
   { path: 'timing.speedGuardRecoveryCooldownMs', legacyValue: 15000, fallback: 5000 },
   { path: 'timing.speedGuardNoProgressReconnectMs', legacyValue: 35000, fallback: 20000 },
-  { path: 'timing.speedGuardReconnectAfterRecoveries', legacyValue: 3, fallback: 2 },
+  { path: 'timing.speedGuardReconnectAfterRecoveries', legacyValue: 2, fallback: 3 },
   { path: 'log.maxSizeBytes', legacyValue: 10485760, fallback: 52428800 },
   { path: 'antibot.limboFallTicks', legacyValue: 96, fallback: 128 },
   { path: 'antibot.limboFallPacketMs', legacyValue: 25, fallback: 50 },

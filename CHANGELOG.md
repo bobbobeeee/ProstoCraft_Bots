@@ -2,6 +2,23 @@
 
 Все заметные изменения проекта фиксируются здесь, чтобы на GitHub было понятно, чем отличается каждая сборка.
 
+## 2.1.0 - 2026-06-08
+
+### Стабильность
+
+- Добавлен адаптивный packet governor для safe/recovery режима после `too many packets`.
+- Добавлен adaptive mining controller для устойчивого packet-break лимита по реальным подтверждениям блоков.
+- Speed guard теперь сначала делает rescan/очистку stale pending и soft restart добычи, а reconnect оставляет последней ступенью.
+- Snapshot получил блок `performance` с effective/raw скоростью, peak, packet mode и причиной просадки.
+- BotFilter/chat-captcha теперь требует evidence из реального server-message/chat packet.
+
+### Обновления и UI
+
+- Центр обновлений получил online/fallback/cache режимы.
+- На пульте добавлен компактный диагноз скорости и packet mode.
+- В логах добавлен фильтр `Важное / Всё`.
+- Android release build больше не создаёт fallback/CI-подпись.
+
 ## 2.0.0 - 2026-06-06
 
 ### LimboFilter

@@ -368,6 +368,12 @@ const BOT_SETTINGS_SECTIONS_V2 = [
         kind: 'number',
         label: 'Максимальная просадка скорости (%)',
         help: 'На сколько процентов скорость может упасть от адаптивной нормы перед восстановлением. 10%: 750 б/м -> порог 675 б/м.'
+      },
+      {
+        path: 'features.adaptivePacketGovernorEnabled',
+        kind: 'boolean',
+        label: 'Адаптивный лимит пакетов',
+        help: 'После реального кика за пакеты временно снижает агрессию и затем плавно возвращает быструю добычу.'
       }
     ]
   },
@@ -525,6 +531,7 @@ const VISIBLE_CONFIG_SETTING_PATHS = new Set([
   'menu.slot2',
   'menu.hotbarSlot',
   'features.enablePeriodicRotation',
+  'features.adaptivePacketGovernorEnabled',
   'logging.debugMode'
 ])
 
@@ -574,6 +581,7 @@ const state = {
   updates: createEmptyUpdateState(),
   activeTab: 'dashboard',
   activeLogView: 'events',
+  activeLogFilter: 'important',
   activeMoreView: 'settings',
   selectedBotIndex: 0,
   isDirty: false,
@@ -635,6 +643,9 @@ function createEmptyUpdateState() {
     body: '',
     asset: null,
     checksum: null,
+    sourceMode: 'idle',
+    signatureStatus: '',
+    installResumeState: '',
     progress: null,
     downloadedFilePath: '',
     downloadedFileName: '',
@@ -833,10 +844,24 @@ function formatHealthReason(reason) {
     'server-world-reset': 'Сервер сбросил мир',
     'runtime-stale': 'Runtime завис',
     'speed-drop': 'Просадка скорости',
+    'mining-confirmation': 'Подтверждения добычи',
+    'packet-budget': 'Packet budget',
+    'fallback-dig': 'Fallback dig',
+    'joining': 'Вход на подсервер',
     'botfilter-hold': 'BotFilter hold',
     'chat-captcha-hold': 'Чат-капча'
   }
   return map[reason] || String(reason || 'Неизвестно')
+}
+
+function formatPacketMode(mode) {
+  const map = {
+    fast: 'быстрый',
+    safe: 'safe',
+    recovering: 'восстановление',
+    fixed: 'фиксированный'
+  }
+  return map[mode] || String(mode || 'быстрый')
 }
 
 function getHealthClass(health) {
@@ -848,8 +873,20 @@ function getHealthClass(health) {
 
 function renderHealthDashboardCard(snapshot = state.runtime.snapshot || {}) {
   const health = getRuntimeHealth(snapshot)
-  const rawRate = snapshot.currentRawRatePerMinute || 0
-  const effectiveRate = snapshot.currentEffectiveRatePerMinute ?? snapshot.currentRatePerMinute ?? 0
+  const performance = snapshot.performance || {}
+  const rawRate = performance.rawRate ?? snapshot.currentRawRatePerMinute ?? 0
+  const effectiveRate = performance.effectiveRate ?? snapshot.currentEffectiveRatePerMinute ?? snapshot.currentRatePerMinute ?? 0
+  const peakRate = performance.peakRate || 0
+  const sustainableRate = performance.sustainableRate || 0
+  const confirmationRatio = Number.isFinite(Number(performance.confirmationRatio))
+    ? Number(performance.confirmationRatio)
+    : 1
+  const confirmLatencyMs = performance.confirmLatencyMs || 0
+  const packetMode = performance.packetMode || 'fast'
+  const packetBudget = performance.packetBudget || {}
+  const fallbackDigCount = performance.fallbackDigCount || 0
+  const bottleneck = performance.lastMiningBottleneck || ''
+  const slowdownReason = performance.lastSlowdownReason || health.diagnosis || ''
   const downtime = formatDuration(health.downtimeMs || 0)
   const lastNetworkError = health.lastNetworkError || 'нет'
   const reconnectReason = health.lastReconnectReason || 'нет'
@@ -868,10 +905,19 @@ function renderHealthDashboardCard(snapshot = state.runtime.snapshot || {}) {
       <div class="dashboard-meta">
         <div class="dashboard-meta-row"><span>Effective</span><strong>${formatNumber(effectiveRate, 1)} б/м</strong></div>
         <div class="dashboard-meta-row"><span>Raw с простоями</span><strong>${formatNumber(rawRate, 1)} б/м</strong></div>
+        <div class="dashboard-meta-row"><span>Peak</span><strong>${formatNumber(peakRate, 1)} б/м</strong></div>
+        <div class="dashboard-meta-row"><span>Sustainable</span><strong>${formatNumber(sustainableRate, 1)} б/м</strong></div>
+        <div class="dashboard-meta-row"><span>Confirm</span><strong>${formatNumber(confirmationRatio * 100, 0)}%</strong></div>
+        <div class="dashboard-meta-row"><span>Latency</span><strong>${formatNumber(confirmLatencyMs, 0)} мс</strong></div>
+        <div class="dashboard-meta-row"><span>Packet</span><strong>${escapeHtml(formatPacketMode(packetMode))}</strong></div>
+        <div class="dashboard-meta-row"><span>Budget</span><strong>${formatNumber(packetBudget.perSecond || 0, 0)}/с · ${formatNumber((packetBudget.budgetScale || 1) * 100, 0)}%</strong></div>
+        <div class="dashboard-meta-row"><span>Fallback</span><strong>${formatNumber(fallbackDigCount, 0)}</strong></div>
         <div class="dashboard-meta-row"><span>Простой</span><strong>${escapeHtml(downtime)}</strong></div>
         <div class="dashboard-meta-row"><span>Reconnect</span><strong>${escapeHtml(reconnectReason)}</strong></div>
         <div class="dashboard-meta-row"><span>Сеть</span><strong>${escapeHtml(lastNetworkError)}</strong></div>
         <div class="dashboard-meta-row"><span>Действие</span><strong>${escapeHtml(recoveryAction)}</strong></div>
+        <div class="dashboard-meta-row dashboard-meta-row--wide"><span>Bottleneck</span><strong>${escapeHtml(bottleneck || 'stable')}</strong></div>
+        <div class="dashboard-meta-row dashboard-meta-row--wide"><span>Диагноз</span><strong>${escapeHtml(slowdownReason || 'скорость нормальная')}</strong></div>
       </div>
     </article>
   `
@@ -1268,6 +1314,12 @@ function renderContextSwitcher() {
       </button>
       <button class="context-tab ${state.activeLogView === 'chat' ? 'is-active' : ''}" type="button" data-log-view="chat">
         ${escapeHtml(LOG_VIEW_LABELS.chat)} <span>${formatNumber(chatCount)}</span>
+      </button>
+      <button class="context-tab ${state.activeLogFilter === 'important' ? 'is-active' : ''}" type="button" data-log-filter="important">
+        Важное
+      </button>
+      <button class="context-tab ${state.activeLogFilter === 'all' ? 'is-active' : ''}" type="button" data-log-filter="all">
+        Всё
       </button>
     `
     return
@@ -2354,6 +2406,17 @@ function getUpdateProgress(updates = state.updates) {
   return { receivedBytes, totalBytes, percent }
 }
 
+function formatUpdateSourceMode(mode) {
+  const map = {
+    online: 'GitHub API',
+    fallback: 'manifest',
+    cache: 'cache',
+    offline: 'offline',
+    idle: 'ожидание'
+  }
+  return map[mode] || String(mode || 'ожидание')
+}
+
 function renderUpdates() {
   if (!elements.updatesContent) return
 
@@ -2432,6 +2495,12 @@ function renderUpdates() {
       </article>
 
       <article class="updates-card">
+        <span class="summary-label">Источник</span>
+        <strong>${escapeHtml(formatUpdateSourceMode(updates.sourceMode))}</strong>
+        <span class="summary-note">${updates.installResumeState ? escapeHtml(updates.installResumeState) : 'без автоустановки'}</span>
+      </article>
+
+      <article class="updates-card">
         <span class="summary-label">Проверка файла</span>
         <strong>${updates.checksum?.hash ? 'SHA256 готов' : 'SHA256 не найден'}</strong>
         <span class="summary-note">${updates.checksum?.hash ? escapeHtml(updates.checksum.hash.slice(0, 12)) : 'Скачивание будет заблокировано'}</span>
@@ -2452,6 +2521,8 @@ function renderUpdates() {
 
 function getUpdateStatusCopy(updates) {
   if (updates.status === 'checking') return 'Проверяю последнюю версию на странице скачивания.'
+  if (updates.sourceMode === 'cache') return 'GitHub сейчас недоступен, показана последняя успешная проверка из cache.'
+  if (updates.sourceMode === 'fallback') return 'GitHub API недоступен, использую lightweight manifest из репозитория.'
   if (updates.status === 'current') return 'У вас уже установлена последняя доступная версия.'
   if (updates.status === 'available') return 'Найдена новая версия. Скачивание начнётся только после нажатия кнопки.'
   if (updates.status === 'downloading') return 'Скачиваю файл обновления и затем проверю SHA256.'
@@ -2466,7 +2537,21 @@ function getUpdateStatusCopy(updates) {
 
 function renderLogs() {
   const totalLogs = state.runtime.logs || []
-  const logs = totalLogs.slice(-140).reverse()
+  const sourceLogs = state.activeLogFilter === 'important'
+    ? totalLogs.filter(entry => {
+        const level = String(entry.level || '').toLowerCase()
+        const message = String(entry.message || entry.rawMessage || '').toLowerCase()
+        return level === 'warning' ||
+          level === 'error' ||
+          message.includes('speed-guard') ||
+          message.includes('packet-safe') ||
+          message.includes('limbofilter') ||
+          message.includes('botfilter') ||
+          message.includes('reconnect') ||
+          message.includes('переподключ')
+      })
+    : totalLogs
+  const logs = sourceLogs.slice(-140).reverse()
   if (!logs.length) {
     elements.logStream.innerHTML = state.capabilities.runtimeControl !== false
       ? '<div class="empty-state">Логи появятся после запуска backend. Здесь будут события по ботам, таймингам и ошибкам соединения.</div>'
@@ -2485,10 +2570,10 @@ function renderLogs() {
     </article>
   `).join('')
 
-  if (totalLogs.length > logs.length) {
+  if (sourceLogs.length > logs.length || sourceLogs.length !== totalLogs.length) {
     elements.logStream.insertAdjacentHTML(
       'beforeend',
-      `<div class="log-trim-note">Показаны последние ${logs.length} записей из ${totalLogs.length}; свежие записи находятся сверху.</div>`
+      `<div class="log-trim-note">Показаны ${logs.length} записей из ${sourceLogs.length} (${totalLogs.length} всего); свежие записи находятся сверху.</div>`
     )
   }
 }
@@ -2922,6 +3007,15 @@ function attachStaticListeners() {
       state.activeLogView = logViewButton.dataset.logView === 'chat' ? 'chat' : 'events'
       state.activeTab = 'logs'
       queueRender('tabs', 'chrome', state.activeLogView === 'chat' ? 'chat' : 'logs')
+      return
+    }
+
+    const logFilterButton = event.target.closest('[data-log-filter]')
+    if (logFilterButton) {
+      state.activeLogFilter = logFilterButton.dataset.logFilter === 'all' ? 'all' : 'important'
+      state.activeLogView = 'events'
+      state.activeTab = 'logs'
+      queueRender('tabs', 'chrome', 'logs')
       return
     }
 

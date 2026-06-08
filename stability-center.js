@@ -6,6 +6,10 @@ const HEALTH_REASONS = new Set([
   'server-world-reset',
   'runtime-stale',
   'speed-drop',
+  'mining-confirmation',
+  'packet-budget',
+  'fallback-dig',
+  'joining',
   'botfilter-hold',
   'chat-captcha-hold'
 ])
@@ -45,6 +49,26 @@ const HEALTH_DEFINITIONS = {
     state: 'degraded',
     severity: 'warning',
     diagnosis: 'Причина просадки: скорость добычи ниже адаптивной нормы.'
+  },
+  'mining-confirmation': {
+    state: 'degraded',
+    severity: 'warning',
+    diagnosis: 'Причина просадки: сервер хуже подтверждает packet-break.'
+  },
+  'packet-budget': {
+    state: 'recovering',
+    severity: 'warning',
+    diagnosis: 'Packet budget адаптируется к устойчивому лимиту сервера.'
+  },
+  'fallback-dig': {
+    state: 'degraded',
+    severity: 'warning',
+    diagnosis: 'Packet-only копание ушло в аварийный dig fallback.'
+  },
+  'joining': {
+    state: 'recovering',
+    severity: 'ok',
+    diagnosis: 'LimboFilter пройден, бот входит на подсервер.'
   },
   'botfilter-hold': {
     state: 'blocked',
@@ -86,6 +110,9 @@ function classifyHealthEvent(event = {}) {
 
   if (text.includes('введите капчу') || text.includes('chat-captcha')) return 'chat-captcha-hold'
   if (text.includes('limbofilter') || text.includes('botfilter') || text.includes('fall-провер')) return 'botfilter-hold'
+  if (text.includes('mining-confirmation') || text.includes('confirmation')) return 'mining-confirmation'
+  if (text.includes('packet-budget') || text.includes('packet budget')) return 'packet-budget'
+  if (text.includes('fallback-dig') || text.includes('fallback dig')) return 'fallback-dig'
   if (text.includes('speed-guard') || text.includes('speed guard') || text.includes('просадка')) return 'speed-drop'
   if (text.includes('runtime-stale') || text.includes('runtime-silent') || text.includes('runtime watchdog')) return 'runtime-stale'
   if (text.includes('сбросил мир') || text.includes('server closed') || text.includes('world reset')) return 'server-world-reset'

@@ -615,8 +615,16 @@ code {
   align-items: start;
 }
 
+.dashboard-meta-row--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .dashboard-meta-row strong {
   text-align: right;
+}
+
+.dashboard-meta-row--wide strong {
+  text-align: left;
 }
 
 .dashboard-empty,

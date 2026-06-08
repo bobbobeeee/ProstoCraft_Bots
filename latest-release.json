@@ -1,0 +1,32 @@
+{
+  "release": {
+    "tag_name": "v2.1.0",
+    "name": "ProstoCraft Bot Studio 2.1.0",
+    "html_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/tag/v2.1.0",
+    "published_at": "2026-06-08T18:26:20Z",
+    "body": "Adaptive mining controller, packet governor, cleaner runtime lifecycle, update cache/fallback and compact diagnostics.",
+    "assets": [
+      {
+        "name": "ProstoCraft.Bot.Studio-Setup-2.1.0.exe",
+        "size": 101325291,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/ProstoCraft.Bot.Studio-Setup-2.1.0.exe"
+      },
+      {
+        "name": "ProstoCraft.Bot.Studio-Mobile-2.1.0.apk",
+        "size": 185622935,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/ProstoCraft.Bot.Studio-Mobile-2.1.0.apk"
+      },
+      {
+        "name": "SHA256SUMS.txt",
+        "size": 0,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/SHA256SUMS.txt"
+      }
+    ]
+  },
+  "checksumText": "735f490f568bcf928e167c7ba7fac3055c2e1548769f925f928d8b8cf14f7880  ProstoCraft.Bot.Studio-Setup-2.1.0.exe\n23cb9f52ff3e1c931fac633c544a5116a58c78c0353f4787ff7fd1daf2173791  ProstoCraft.Bot.Studio-Mobile-2.1.0.apk\n",
+  "source": {
+    "owner": "bobbobeeee",
+    "repo": "ProstoCraft_Bots",
+    "releaseUrl": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest"
+  }
+}

@@ -13,6 +13,7 @@ const runtimeTarget = path.join(rendererTarget, 'nodejs-project')
 const platformRuntimeTarget = path.join(platformRendererTarget, 'nodejs-project')
 const runtimeInstallSource = path.join(cordovaRoot, 'nodejs-project')
 const rootRuntimeFiles = ['bot.js', 'bot-filter.js', 'limbo-filter.js', 'reconnect-policy.js', 'speed-guard.js', 'stability-center.js', 'monitoring.js', 'update-service.js', 'config.json']
+const rootRuntimeDirectories = ['runtime-core']
 const cordovaWebRuntimeFiles = ['cordova.js', 'cordova_plugins.js']
 const runtimePrunedDirectories = new Set([
   '.bin',
@@ -218,6 +219,13 @@ function main() {
     )
   }
 
+  for (const directoryName of rootRuntimeDirectories) {
+    const sourceDirectory = path.join(projectRoot, directoryName)
+    if (fs.existsSync(sourceDirectory)) {
+      copyRecursive(sourceDirectory, path.join(runtimeTarget, directoryName))
+    }
+  }
+
   syncRuntimeDependencies()
   syncCordovaWebRuntime(rendererTarget)
 
@@ -231,6 +239,13 @@ function main() {
         path.join(projectRoot, fileName),
         path.join(platformRuntimeTarget, fileName)
       )
+    }
+
+    for (const directoryName of rootRuntimeDirectories) {
+      const sourceDirectory = path.join(projectRoot, directoryName)
+      if (fs.existsSync(sourceDirectory)) {
+        copyRecursive(sourceDirectory, path.join(platformRuntimeTarget, directoryName))
+      }
     }
 
     syncCordovaWebRuntime(platformRendererTarget)
