@@ -20,6 +20,8 @@ const runtimePrunedDirectories = new Set([
   '.github',
   '.vscode',
   '@types',
+  'benchmark',
+  'benchmarks',
   'coverage',
   'doc',
   'docs',
@@ -28,14 +30,29 @@ const runtimePrunedDirectories = new Set([
   'sample',
   'samples',
   'test',
-  'tests'
+  'tests',
+  'tool',
+  'tools'
 ])
 const runtimePrunedFilePatterns = [
+  /^(authors|changelog|contributors|history|licen[cs]e|notice|readme)(\..*)?$/i,
   /\.d\.ts$/i,
   /\.gz$/i,
+  /\.md$/i,
   /\.map$/i,
   /\.ts$/i
 ]
+const minecraftDataRuntimePcDirs = new Set([
+  'common',
+  '1.16',
+  '1.16.1',
+  '1.16.2',
+  '1.16.4',
+  '1.16.5'
+])
+const minecraftDataRuntimeBedrockDirs = new Set([
+  'common'
+])
 
 function ensureProjectExists() {
   if (!fs.existsSync(cordovaRoot)) {
@@ -111,6 +128,28 @@ function pruneRuntimeNodeModules(targetPath) {
       fs.rmSync(entryPath, { force: true })
     }
   }
+
+  pruneMinecraftData(targetPath)
+}
+
+function pruneEditionData(editionDataPath, allowedDirectories) {
+  if (!fs.existsSync(editionDataPath)) return
+
+  for (const entry of fs.readdirSync(editionDataPath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (allowedDirectories.has(entry.name)) continue
+
+    fs.rmSync(path.join(editionDataPath, entry.name), { recursive: true, force: true })
+  }
+}
+
+function pruneMinecraftData(nodeModulesPath) {
+  const dataRoot = path.join(nodeModulesPath, 'minecraft-data', 'minecraft-data', 'data')
+
+  if (!fs.existsSync(dataRoot)) return
+
+  pruneEditionData(path.join(dataRoot, 'pc'), minecraftDataRuntimePcDirs)
+  pruneEditionData(path.join(dataRoot, 'bedrock'), minecraftDataRuntimeBedrockDirs)
 }
 
 function toAssetPath(targetPath) {

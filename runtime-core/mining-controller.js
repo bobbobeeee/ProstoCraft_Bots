@@ -30,7 +30,7 @@ function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
     adjustIntervalMs: Math.max(1000, Number(options.adjustIntervalMs ?? DEFAULT_ADJUST_INTERVAL_MS) || DEFAULT_ADJUST_INTERVAL_MS),
-    minBudgetScale: clamp(options.minBudgetScale ?? 0.55, 0.1, 1),
+    minBudgetScale: clamp(options.minBudgetScale ?? 0.85, 0.1, 1),
     maxBudgetScale: clamp(options.maxBudgetScale ?? 1, 0.1, 1),
     increaseStep: clamp(options.increaseStep ?? 0.04, 0.01, 0.5),
     decreaseStep: clamp(options.decreaseStep ?? 0.1, 0.01, 0.6),
@@ -39,8 +39,8 @@ function normalizeOptions(options = {}) {
     badConfirmationRatio: clamp(options.badConfirmationRatio ?? 0.55, 0.1, 1),
     minSamples: Math.max(1, Number(options.minSamples ?? 20) || 20),
     stalePendingMs: Math.max(100, Number(options.stalePendingMs ?? 1500) || 1500),
-    stalePendingWarn: Math.max(1, Number(options.stalePendingWarn ?? 4) || 4),
-    pendingWarn: Math.max(1, Number(options.pendingWarn ?? 8) || 8),
+    stalePendingWarn: Math.max(1, Number(options.stalePendingWarn ?? 16) || 16),
+    pendingWarn: Math.max(1, Number(options.pendingWarn ?? 12) || 12),
     pendingHealthy: Math.max(0, Number(options.pendingHealthy ?? 2) || 2),
     latencyWarnMs: Math.max(100, Number(options.latencyWarnMs ?? 900) || 900),
     softRecoveryLimit: Math.max(1, Number(options.softRecoveryLimit ?? 3) || 3),
@@ -284,24 +284,22 @@ function evaluateMiningController(controller, options = {}) {
   const previousScale = target.budgetScale
   let nextScale = previousScale
   let bottleneck = 'stable'
+  const goodFlow = ratio >= target.options.goodConfirmationRatio && fallbackDigCount === 0
+  const stalePressure = stale >= target.options.stalePendingWarn && ratio < target.options.warnConfirmationRatio
+  const pendingPressure = pendingCount >= target.options.pendingWarn && ratio < target.options.goodConfirmationRatio
 
   if (attempts < target.options.minSamples) {
     bottleneck = 'learning'
-  } else if (ratio < target.options.badConfirmationRatio || stale >= target.options.stalePendingWarn) {
-    bottleneck = stale >= target.options.stalePendingWarn ? 'pending-packets' : 'mining-confirmation'
+  } else if (ratio < target.options.badConfirmationRatio || stalePressure) {
+    bottleneck = stalePressure ? 'pending-packets' : 'mining-confirmation'
     nextScale -= target.options.decreaseStep
-  } else if (pendingCount >= target.options.pendingWarn || latency >= target.options.latencyWarnMs) {
-    bottleneck = pendingCount >= target.options.pendingWarn ? 'pending-packets' : 'mining-confirmation-latency'
+  } else if (pendingPressure || (latency >= target.options.latencyWarnMs && ratio < target.options.goodConfirmationRatio)) {
+    bottleneck = pendingPressure ? 'pending-packets' : 'mining-confirmation-latency'
     nextScale -= target.options.decreaseStep / 2
   } else if (fallbackDigCount > 0 && ratio < target.options.warnConfirmationRatio) {
     bottleneck = 'fallback-dig'
     nextScale -= target.options.decreaseStep / 2
-  } else if (
-    ratio >= target.options.goodConfirmationRatio &&
-    fallbackDigCount === 0 &&
-    stale === 0 &&
-    pendingCount <= target.options.pendingHealthy
-  ) {
+  } else if (goodFlow && pendingCount <= target.options.pendingWarn) {
     bottleneck = 'stable'
     nextScale += target.options.increaseStep
   } else if (ratio < target.options.warnConfirmationRatio) {
@@ -318,6 +316,13 @@ function evaluateMiningController(controller, options = {}) {
       : snapshot.window.ratePerMinute
   }
 
+  const decisionSnapshot = {
+    ...snapshot,
+    budgetScale: target.budgetScale,
+    sustainableRate: target.sustainableRate || snapshot.sustainableRate,
+    lastMiningBottleneck: bottleneck,
+    window: { ...snapshot.window }
+  }
   target.window = createWindow(now)
 
   return {
@@ -325,6 +330,7 @@ function evaluateMiningController(controller, options = {}) {
     previousScale,
     nextScale: target.budgetScale,
     bottleneck,
+    decisionSnapshot,
     snapshot: getMiningControllerSnapshot(target, now)
   }
 }
@@ -348,7 +354,9 @@ function getMiningControllerLimits(controller, baseLimits = {}) {
   return {
     ...baseLimits,
     fastPerSecond: scaleLimit(baseLimits.fastPerSecond ?? baseLimits.perSecond, 1),
-    fastBurst: scaleLimit(baseLimits.fastBurst ?? baseLimits.burst, 1)
+    fastBurst: scaleLimit(baseLimits.fastBurst ?? baseLimits.burst, 1),
+    safePerSecond: scaleLimit(baseLimits.safePerSecond ?? baseLimits.fastPerSecond ?? baseLimits.perSecond, 1),
+    safeBurst: scaleLimit(baseLimits.safeBurst ?? baseLimits.fastBurst ?? baseLimits.burst, 1)
   }
 }
 

@@ -8,8 +8,8 @@
 
 Доступны два варианта:
 
-- `ProstoCraft.Bot.Studio-Setup-2.1.0.exe` - установщик для Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.1.0.apk` - APK для Android.
+- `ProstoCraft.Bot.Studio-Setup-3.0.0.exe` - установщик для Windows.
+- `ProstoCraft.Bot.Studio-Mobile-3.0.0.apk` - APK для Android.
 
 ## Возможности
 

@@ -511,8 +511,8 @@ const BREAK_PACKET_MIN_TARGET_COOLDOWN_MS = Math.max(0, Number([75, 45, 20].incl
 const BREAK_PACKET_MAX_PER_SECOND = Math.max(2, Number([72, 108, 160, 240].includes(config.timing.breakPacketMaxPerSecond) ? 300 : (config.timing.breakPacketMaxPerSecond ?? 300)) || 300)
 const BREAK_PACKET_BURST_WINDOW_MS = Math.max(50, Number(config.timing.breakPacketBurstWindowMs ?? 250) || 250)
 const BREAK_PACKET_BURST_LIMIT = Math.max(2, Number([18, 28, 42, 64].includes(config.timing.breakPacketBurstLimit) ? 84 : (config.timing.breakPacketBurstLimit ?? 84)) || 84)
-const BREAK_PACKET_SAFE_MAX_PER_SECOND = Math.max(2, Number([42, 60, 96, 120, 150].includes(config.timing.breakPacketSafeMaxPerSecond) ? 240 : (config.timing.breakPacketSafeMaxPerSecond ?? 240)) || 240)
-const BREAK_PACKET_SAFE_BURST_LIMIT = Math.max(2, Number([10, 15, 24, 32, 40].includes(config.timing.breakPacketSafeBurstLimit) ? 68 : (config.timing.breakPacketSafeBurstLimit ?? 68)) || 68)
+const BREAK_PACKET_SAFE_MAX_PER_SECOND = Math.max(2, Number([42, 60, 96, 120, 150, 240].includes(config.timing.breakPacketSafeMaxPerSecond) ? 160 : (config.timing.breakPacketSafeMaxPerSecond ?? 160)) || 160)
+const BREAK_PACKET_SAFE_BURST_LIMIT = Math.max(2, Number([10, 15, 24, 32, 40, 68].includes(config.timing.breakPacketSafeBurstLimit) ? 42 : (config.timing.breakPacketSafeBurstLimit ?? 42)) || 42)
 const BREAK_PACKET_SAFE_MODE_MS = Math.max(60000, Number(config.timing.breakPacketSafeModeMs ?? 120000) || 120000)
 const BREAK_PACKET_SAFE_REPEATS = Math.max(1, Number(config.timing.breakPacketSafeRepeats ?? 1) || 1)
 const LOGIN_COMMAND_COOLDOWN_MS = Math.max(1000, Number(config.timing.loginCommandCooldownMs ?? 7000) || 7000)
@@ -524,7 +524,7 @@ const PACKET_ONLY_MINING = config.timing.packetOnlyMining !== false
 const PACKET_ONLY_FALLBACK_MS = Math.max(100, Number(config.timing.packetOnlyFallbackMs ?? 1200) || 1200)
 const MINING_CONTROLLER_ADJUST_INTERVAL_MS = Math.max(3000, Number(config.timing.miningControllerAdjustIntervalMs ?? 12000) || 12000)
 const MINING_CONTROLLER_SOFT_RECOVERY_LIMIT = Math.max(1, Number(config.timing.miningControllerSoftRecoveryLimit ?? 3) || 3)
-const MINING_CONTROLLER_MIN_BUDGET_SCALE = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerMinBudgetScale ?? 0.55) || 0.55))
+const MINING_CONTROLLER_MIN_BUDGET_SCALE = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerMinBudgetScale ?? 0.85) || 0.85))
 const MINING_CONTROLLER_GOOD_CONFIRMATION_RATIO = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerGoodConfirmationRatio ?? 0.86) || 0.86))
 const MINING_CONTROLLER_BAD_CONFIRMATION_RATIO = Math.min(1, Math.max(0.1, Number(config.timing.miningControllerBadConfirmationRatio ?? 0.55) || 0.55))
 const MINING_CONTROLLER_STALE_PENDING_MS = Math.max(100, Number(config.timing.miningControllerStalePendingMs ?? PACKET_ONLY_FALLBACK_MS) || PACKET_ONLY_FALLBACK_MS)
@@ -678,6 +678,19 @@ const SPEED_GUARD_TARGET_RATIO = getSpeedGuardTargetRatioFromDropPercent(
 const SPEED_GUARD_RATE_WINDOW_MS = Math.max(SPEED_WINDOW_MS, Number(config.timing?.speedGuardRateWindowMs ?? 30000) || 30000)
 const SPEED_GUARD_BUTTON_IDLE_MS = Math.max(5000, Number(config.timing?.speedGuardButtonIdleMs ?? 12000) || 12000)
 const SPEED_GUARD_NO_PROGRESS_RECONNECT_MS = Math.max(15000, Number(config.timing?.speedGuardNoProgressReconnectMs ?? 35000) || 35000)
+const SPEED_GUARD_RECOVERY_TOLERANCE_RATIO = Math.min(
+  0.995,
+  Math.max(0.9, Number(config.timing?.speedGuardRecoveryToleranceRatio ?? 0.98) || 0.98)
+)
+const SPEED_GUARD_RECOVERY_MIN_GAP_BPM = Math.max(
+  0,
+  Number(config.timing?.speedGuardRecoveryMinGapBpm ?? 20) || 20
+)
+const ONLINE_MINING_STALL_MS = Math.max(
+  OFFLINE_WATCHDOG_INTERVAL_MS * 2,
+  SPEED_GUARD_NO_PROGRESS_RECONNECT_MS * 3,
+  Number(config.maintenance?.onlineMiningStallMs ?? 90000) || 90000
+)
 const SPEED_GUARD_RECONNECT_AFTER_RECOVERIES = Math.max(3, Number(config.timing?.speedGuardReconnectAfterRecoveries ?? 3) || 3)
 const SPEED_GUARD_SOFT_RESTART_AFTER_RECOVERIES = Math.max(2, Number(config.timing?.speedGuardSoftRestartAfterRecoveries ?? 2) || 2)
 const SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS = Math.max(
@@ -1314,6 +1327,7 @@ function updateBotStatus(botName, status, data = {}) {
       effectiveBlocksPerSecond: 0,
       rateActiveSince: status === 'копает' ? now : 0,
       rateStatusChangedAt: now,
+      lastActivityTime: now,
       lastBlockTime: now,
       blockTimes: []
     }
@@ -1323,6 +1337,7 @@ function updateBotStatus(botName, status, data = {}) {
   bot.status = status
   if (previousStatus !== status) {
     bot.rateStatusChangedAt = now
+    bot.lastActivityTime = now
     if (status === 'копает') {
       bot.rateActiveSince = now
       setRuntimeHealth('mining-ok', { lastRecoveryAction: 'mining-resumed' })
@@ -1335,8 +1350,10 @@ function updateBotStatus(botName, status, data = {}) {
     monitorData.totalBlocks++
     bot.blockTimes.push(now)
     bot.lastBlockTime = now
+    bot.lastActivityTime = now
   } else if (data.timestamp) {
     bot.lastBlockTime = data.timestamp
+    bot.lastActivityTime = data.timestamp
   }
   refreshBotRates()
   requestUiRefresh()
@@ -1508,63 +1525,113 @@ function updateUI() {
 
 // ============================================================================
 // ============================================================================
+function restartManagedBotInstance(botObj, reason, logMessage) {
+  const cfg = botsConfigs.find(c => c.username === botObj.username)
+  if (!cfg) {
+    addLog('warning', 'SYSTEM', `Не найден конфиг для перезапуска ${botObj.username} (${reason})`)
+    return false
+  }
+
+  try {
+    if (botObj.cleanup) botObj.cleanup()
+  } catch (error) {}
+
+  const newBotObj = createBot(cfg)
+  const index = activeBots.findIndex(b => b.username === botObj.username)
+  if (index !== -1) {
+    activeBots[index] = newBotObj
+  } else {
+    activeBots.push(newBotObj)
+  }
+
+  if (logMessage) {
+    addLog('warning', 'SYSTEM', logMessage)
+  }
+  addLog('success', 'SYSTEM', `Бот ${botObj.username} принудительно перезапущен`)
+  return true
+}
+
 function checkAndRestartStuckBots() {
   if (!runtimeEnabled || shuttingDown) return
   const now = Date.now()
   
   for (const botObj of activeBots) {
-    if (!botObj.bot || !botObj.bot.entity || !botObj.isOnline) {
-      const botData = monitorData.bots[botObj.username]
-      if (botData) {
-        const timeSinceLastBlock = now - botData.lastBlockTime
-        const reconnectPending = typeof botObj.hasReconnectPending === 'function'
-          ? botObj.hasReconnectPending()
-          : Boolean(botObj.hasReconnectPending)
-        const botFilterBusy = typeof botObj.isBotFilterBusy === 'function'
-          ? botObj.isBotFilterBusy()
-          : Boolean(botObj.isBotFilterBusy)
-        const lifecycle = typeof botObj.getLifecycleSnapshot === 'function'
-          ? botObj.getLifecycleSnapshot()
-          : { state: 'unknown', ageMs: 0 }
-        const reconnectDueAt = Number(botObj.reconnectDueAt) || 0
-        const reconnectOverdue = reconnectDueAt > 0 && now - reconnectDueAt > Math.min(OFFLINE_WATCHDOG_MS, 30000)
-        const reconnectStuck = lifecycle.state === 'waiting-reconnect' &&
-          lifecycle.ageMs > OFFLINE_WATCHDOG_MS &&
-          (!reconnectPending || reconnectOverdue)
-        const lifecycleBusy = lifecycle.state === 'botfilter' ||
-          lifecycle.state === 'held' ||
-          (lifecycle.state === 'waiting-reconnect' && !reconnectStuck)
-        const recoverableStatus = botData.status === 'оффлайн' || botData.status === 'ожидание'
-        
-        if (
-          timeSinceLastBlock > OFFLINE_WATCHDOG_MS &&
-          recoverableStatus &&
-          !botFilterBusy &&
-          !lifecycleBusy &&
-          (!reconnectPending || reconnectOverdue || reconnectStuck)
-        ) {
-          const reason = reconnectStuck || reconnectOverdue ? 'reconnect timer stuck' : 'offline watchdog'
-          setRuntimeHealth('runtime-stale', {
-            lastReconnectReason: reason,
-            lastRecoveryAction: 'bot instance restart'
-          })
-          addLog('warning', 'SYSTEM', `Бот ${botObj.username} застрял офлайн (${Math.round(timeSinceLastBlock/1000)}с, ${reason}) - перезапуск`)
-          
-          const cfg = botsConfigs.find(c => c.username === botObj.username)
-          if (cfg) {
-            try {
-              if (botObj.cleanup) botObj.cleanup()
-            } catch(e) {}
-            
-            const newBotObj = createBot(cfg)
-            const index = activeBots.findIndex(b => b.username === botObj.username)
-            if (index !== -1) {
-              activeBots[index] = newBotObj
-              addLog('success', 'SYSTEM', `Бот ${botObj.username} принудительно перезапущен`)
-            }
-          }
-        }
+    const botData = monitorData.bots[botObj.username]
+    if (!botData) continue
+
+    const lastBlockTime = Number(botData.lastBlockTime) || monitorData.startTime || now
+    const lastActivityTime = Math.max(
+      lastBlockTime,
+      Number(botData.lastActivityTime) || 0,
+      Number(botData.rateStatusChangedAt) || 0
+    )
+    const timeSinceLastBlock = now - lastBlockTime
+    const timeSinceLastActivity = now - (lastActivityTime || now)
+    const reconnectPending = typeof botObj.hasReconnectPending === 'function'
+      ? botObj.hasReconnectPending()
+      : Boolean(botObj.hasReconnectPending)
+    const botFilterBusy = typeof botObj.isBotFilterBusy === 'function'
+      ? botObj.isBotFilterBusy()
+      : Boolean(botObj.isBotFilterBusy)
+    const lifecycle = typeof botObj.getLifecycleSnapshot === 'function'
+      ? botObj.getLifecycleSnapshot()
+      : { state: 'unknown', ageMs: 0 }
+    const reconnectDueAt = Number(botObj.reconnectDueAt) || 0
+    const reconnectOverdue = reconnectDueAt > 0 && now - reconnectDueAt > Math.min(OFFLINE_WATCHDOG_MS, 30000)
+    const reconnectStuck = lifecycle.state === 'waiting-reconnect' &&
+      lifecycle.ageMs > OFFLINE_WATCHDOG_MS &&
+      (!reconnectPending || reconnectOverdue)
+    const lifecycleBusy = lifecycle.state === 'botfilter' ||
+      lifecycle.state === 'held' ||
+      (lifecycle.state === 'waiting-reconnect' && !reconnectStuck)
+    const isOnlineBot = Boolean(botObj.bot && botObj.bot.entity && botObj.isOnline)
+
+    if (!isOnlineBot) {
+      const recoverableStatus = botData.status === 'оффлайн' || botData.status === 'ожидание'
+
+      if (
+        timeSinceLastActivity > OFFLINE_WATCHDOG_MS &&
+        recoverableStatus &&
+        !botFilterBusy &&
+        !lifecycleBusy &&
+        (!reconnectPending || reconnectOverdue || reconnectStuck)
+      ) {
+        const reason = reconnectStuck || reconnectOverdue ? 'reconnect timer stuck' : 'offline watchdog'
+        setRuntimeHealth('runtime-stale', {
+          lastReconnectReason: reason,
+          lastRecoveryAction: 'bot instance restart'
+        })
+        restartManagedBotInstance(
+          botObj,
+          reason,
+          `Бот ${botObj.username} застрял оффлайн (${Math.round(timeSinceLastActivity/1000)}с, ${reason}) - перезапуск`
+        )
       }
+      continue
+    }
+
+    const miningLooksStale = botData.status === 'копает' &&
+      lifecycle.state === 'mining' &&
+      timeSinceLastBlock > ONLINE_MINING_STALL_MS
+
+    if (
+      miningLooksStale &&
+      !diggingPaused &&
+      !botFilterBusy &&
+      !lifecycleBusy &&
+      !reconnectPending
+    ) {
+      const reason = 'online mining stall'
+      setRuntimeHealth('runtime-stale', {
+        lastReconnectReason: reason,
+        lastRecoveryAction: 'bot instance restart',
+        diagnosis: `Бот онлайн, но нет подтвержденных блоков ${Math.round(timeSinceLastBlock / 1000)}с.`
+      })
+      restartManagedBotInstance(
+        botObj,
+        reason,
+        `BOT STALE: ${botObj.username} онлайн, но добыча молчит ${Math.round(timeSinceLastBlock/1000)}с -> перезапуск`
+      )
     }
   }
 }
@@ -2015,9 +2082,9 @@ function createBot(cfg) {
     return {
       safeMode,
       packetMode: forcedSafeMode ? 'safe' : governorLimits.mode,
-      perSecond: forcedSafeMode ? BREAK_PACKET_SAFE_MAX_PER_SECOND : governorLimits.perSecond,
+      perSecond: forcedSafeMode ? adaptiveBaseLimits.safePerSecond : governorLimits.perSecond,
       burstWindowMs: governorLimits.burstWindowMs,
-      burst: forcedSafeMode ? BREAK_PACKET_SAFE_BURST_LIMIT : governorLimits.burst,
+      burst: forcedSafeMode ? adaptiveBaseLimits.safeBurst : governorLimits.burst,
       targetCooldownMs: governorLimits.targetCooldownMs,
       pendingRetryMs: governorLimits.pendingRetryMs,
       repeatsLimit: forcedSafeMode ? BREAK_PACKET_SAFE_REPEATS : governorLimits.repeatsLimit,
@@ -2314,6 +2381,7 @@ function createBot(cfg) {
       force: options.force === true
     })
     const snapshot = result.snapshot || getMiningControllerSnapshot(miningController, now)
+    const decisionSnapshot = result.decisionSnapshot || snapshot
 
     if (result.changed) {
       diagEvent('adaptive-mining-controller', {
@@ -2322,11 +2390,11 @@ function createBot(cfg) {
         previousScale: result.previousScale,
         nextScale: result.nextScale,
         bottleneck: result.bottleneck,
-        snapshot
+        snapshot: decisionSnapshot
       })
     }
 
-    const bottleneck = result.bottleneck || snapshot.lastMiningBottleneck
+    const bottleneck = result.bottleneck || decisionSnapshot.lastMiningBottleneck
     if (
       result.changed &&
       bottleneck &&
@@ -2335,20 +2403,25 @@ function createBot(cfg) {
     ) {
       lastMiningControllerLogAt = now
       const healthReason = getMiningBottleneckHealthReason(bottleneck)
-      const budgetPercent = Math.round((snapshot.budgetScale || 1) * 100)
-      const confirmationPercent = Math.round((snapshot.confirmationRatio || 0) * 100)
+      const budgetPercent = Math.round((decisionSnapshot.budgetScale || 1) * 100)
+      const confirmationPercent = Math.round((decisionSnapshot.confirmationRatio || 0) * 100)
+      const staleCleared = decisionSnapshot.window?.stalePendingCleared || decisionSnapshot.stalePendingCleared || 0
+      const pendingCount = decisionSnapshot.pendingCount || 0
+      const extra = staleCleared > 0 || pendingCount > 0
+        ? `, pending ${pendingCount}, stale ${staleCleared}`
+        : ''
       setRuntimeHealth(healthReason, {
         lastRecoveryAction: 'adaptive mining controller',
-        diagnosis: `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%.`
+        diagnosis: `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%${extra}.`
       })
       addLog(
         'warning',
         username,
-        `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%`
+        `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%${extra}`
       )
     }
 
-    return snapshot
+    return decisionSnapshot
   }
 
   function requestSoftMiningRestart(reason = 'speed-guard') {
@@ -2361,7 +2434,11 @@ function createBot(cfg) {
     pendingPacketBreaks.clear()
     lastBreakPacketByTarget.clear()
     resetMiningControllerRecovery(miningController)
-    resetSpeedGuardGrace('soft-mining-restart')
+    resetSpeedGuardGrace('soft-mining-restart', {
+      graceMs: Math.min(10000, SPEED_GUARD_START_GRACE_MS),
+      preserveRecoveries: true,
+      preserveCooldown: true
+    })
     setRuntimeHealth('speed-drop', {
       lastRecoveryAction: 'soft mining restart',
       diagnosis: 'Speed-guard перезапускает mining loop без полного reconnect.'
@@ -2382,6 +2459,17 @@ function createBot(cfg) {
 
   function getSpeedGuardTarget() {
     return getSpeedGuardTargetRate(speedGuardProfile, SPEED_GUARD_TARGET_RATIO)
+  }
+
+  function getSpeedGuardRecoveryTriggerRate(targetRate) {
+    const target = Math.max(0, Number(targetRate) || 0)
+    if (target <= 0) return 0
+
+    const ratioTrigger = target * SPEED_GUARD_RECOVERY_TOLERANCE_RATIO
+    const gapTrigger = SPEED_GUARD_RECOVERY_MIN_GAP_BPM > 0 && target > SPEED_GUARD_RECOVERY_MIN_GAP_BPM
+      ? target - SPEED_GUARD_RECOVERY_MIN_GAP_BPM
+      : ratioTrigger
+    return Math.max(0, Math.min(ratioTrigger, gapTrigger))
   }
 
   function getSpeedGuardRateWindowMs() {
@@ -2418,15 +2506,22 @@ function createBot(cfg) {
     speedGuardRecoveries = 0
   }
 
-  function resetSpeedGuardGrace(reason = 'external-hold') {
-    speedGuardStartedAt = Date.now()
+  function resetSpeedGuardGrace(reason = 'external-hold', options = {}) {
+    const graceMs = Math.max(0, Number(options.graceMs ?? SPEED_GUARD_START_GRACE_MS) || 0)
+    speedGuardStartedAt = Date.now() - Math.max(0, SPEED_GUARD_START_GRACE_MS - graceMs)
     speedGuardLowSince = 0
-    speedGuardRecoveries = 0
-    speedGuardLastRecoveryAt = 0
+    if (options.preserveRecoveries !== true) {
+      speedGuardRecoveries = 0
+    }
+    if (options.preserveCooldown !== true) {
+      speedGuardLastRecoveryAt = 0
+    }
     speedGuardCheckRunning = false
     diagEvent('speed-guard-grace-reset', {
       reason,
-      startGraceMs: SPEED_GUARD_START_GRACE_MS
+      startGraceMs: SPEED_GUARD_START_GRACE_MS,
+      effectiveGraceMs: graceMs,
+      preserveRecoveries: options.preserveRecoveries === true
     })
   }
 
@@ -2439,7 +2534,8 @@ function createBot(cfg) {
     const emptyTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'empty')
     const unloadedTargets = snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
     const activeProgress = Number.isFinite(idleFor) && idleFor < Math.min(buttonIdleMs, noProgressReconnectMs)
-    const speedDropExceeded = targetRate > 0 && currentRate < targetRate
+    const recoveryTriggerRate = getSpeedGuardRecoveryTriggerRate(targetRate)
+    const speedDropExceeded = recoveryTriggerRate > 0 && currentRate < recoveryTriggerRate
     const sustainedLowMs = speedGuardLowSince > 0
       ? Math.max(0, now - speedGuardLowSince)
       : 0
@@ -2493,6 +2589,7 @@ function createBot(cfg) {
     diagEvent('speed-guard-recovery', {
       currentRate,
       targetRate,
+      recoveryTriggerRate,
       peakRate: getSpeedGuardPeak(),
       idleFor,
       buttonIdleMs,
@@ -2535,7 +2632,20 @@ function createBot(cfg) {
     prunePacketBreakTracking(now, {
       packetTtl: Math.min(PACKET_BREAK_CONFIRM_WINDOW_MS, MINING_CONTROLLER_STALE_PENDING_MS)
     })
-    evaluateAdaptiveMiningController('speed-guard', { force: true, now })
+    const controllerSnapshot = evaluateAdaptiveMiningController('speed-guard', { force: true, now })
+    const confirmationAttempts = Number(controllerSnapshot.window?.sentBreakAttempts) || 0
+    const confirmationRatio = Number(controllerSnapshot.confirmationRatio)
+    const packetConfirmationBad = confirmationAttempts >= 8 &&
+      Number.isFinite(confirmationRatio) &&
+      confirmationRatio < MINING_CONTROLLER_BAD_CONFIRMATION_RATIO
+
+    if (speedDropExceeded && packetConfirmationBad && !isPacketSafetyModeActive()) {
+      activatePacketSafetyMode('proactive-low-confirmation')
+      resetSpeedGuardGrace('packet-safe-low-confirmation', {
+        graceMs: Math.min(30000, SPEED_GUARD_START_GRACE_MS)
+      })
+      return
+    }
 
     if (!digLoopRunning && isEntryButtonPressedForCurrentJoin()) {
       addLog('warning', username, 'Speed-guard: mining loop не активен, запускаю заново')
@@ -2639,16 +2749,26 @@ function createBot(cfg) {
       const currentRate = getCurrentRatePerMinute()
       const peakRate = rememberSpeedGuardPeak(currentRate)
       const targetRate = getSpeedGuardTarget()
+      const recoveryTriggerRate = getSpeedGuardRecoveryTriggerRate(targetRate)
       const progressAge = getMiningProgressAgeMs(now)
       const rateWindowMs = getSpeedGuardRateWindowMs()
       const rateMemoryMs = getSpeedGuardRateMemoryMs()
       const lowRateMs = getSpeedGuardLowRateMs()
       const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
+      const miningControllerSnapshot = getMiningControllerSnapshot(miningController, now)
+      const confirmationAttempts = Number(miningControllerSnapshot.window?.sentBreakAttempts) || 0
+      const confirmationRatio = Number(miningControllerSnapshot.confirmationRatio)
+      const lowConfirmationPipeline = targetRate > 0 &&
+        currentRate < recoveryTriggerRate &&
+        confirmationAttempts >= 8 &&
+        Number.isFinite(confirmationRatio) &&
+        confirmationRatio < MINING_CONTROLLER_BAD_CONFIRMATION_RATIO
 
       const hasFreshProgress = Number.isFinite(progressAge) && progressAge <= Math.max(rateWindowMs, lowRateMs)
       const isLearningBaseline = targetRate <= 0
       const isHealthyRate = targetRate > 0 && currentRate >= targetRate
-      if (isHealthyRate || (isLearningBaseline && hasFreshProgress)) {
+      const isWithinRecoveryBand = recoveryTriggerRate > 0 && currentRate >= recoveryTriggerRate
+      if (isHealthyRate || isWithinRecoveryBand || (isLearningBaseline && hasFreshProgress)) {
         if (monitorData.health?.reason === 'speed-drop') {
           setRuntimeHealth('mining-ok', { lastRecoveryAction: 'speed restored' })
         }
@@ -2662,16 +2782,22 @@ function createBot(cfg) {
           currentRate,
           targetRate,
           peakRate,
+          recoveryTriggerRate,
           progressAge,
           rateWindowMs,
           rateMemoryMs,
           lowRateMs,
-          noProgressReconnectMs
+          noProgressReconnectMs,
+          confirmationAttempts,
+          confirmationRatio,
+          lowConfirmationPipeline
         })
-        return
+        if (!lowConfirmationPipeline) {
+          return
+        }
       }
 
-      if (now - speedGuardLowSince < lowRateMs && progressAge < noProgressReconnectMs) {
+      if (!lowConfirmationPipeline && now - speedGuardLowSince < lowRateMs && progressAge < noProgressReconnectMs) {
         return
       }
 

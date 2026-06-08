@@ -66,8 +66,8 @@ const LEGACY_CONFIG_RULES = [
   { path: 'timing.breakPacketMinTargetCooldownMs', legacyValues: [75, 45, 20], fallback: 8 },
   { path: 'timing.breakPacketMaxPerSecond', legacyValues: [72, 108, 160, 240], fallback: 300 },
   { path: 'timing.breakPacketBurstLimit', legacyValues: [18, 28, 42, 64], fallback: 84 },
-  { path: 'timing.breakPacketSafeMaxPerSecond', legacyValues: [42, 60, 96, 120, 150], fallback: 240 },
-  { path: 'timing.breakPacketSafeBurstLimit', legacyValues: [10, 15, 24, 32, 40], fallback: 68 },
+  { path: 'timing.breakPacketSafeMaxPerSecond', legacyValues: [42, 60, 96, 120, 150, 240], fallback: 160 },
+  { path: 'timing.breakPacketSafeBurstLimit', legacyValues: [10, 15, 24, 32, 40, 68], fallback: 42 },
   { path: 'timing.breakPacketSafeModeMs', legacyValue: 900000, fallback: 120000 },
   { path: 'timing.reactiveBreakRepeats', legacyValue: 2, fallback: 1 },
   { path: 'timing.transientBreakRepeats', legacyValue: 2, fallback: 1 },
@@ -94,6 +94,11 @@ const LEGACY_CONFIG_RULES = [
   { path: 'timing.speedGuardRecoveryCooldownMs', legacyValue: 15000, fallback: 5000 },
   { path: 'timing.speedGuardNoProgressReconnectMs', legacyValue: 35000, fallback: 20000 },
   { path: 'timing.speedGuardReconnectAfterRecoveries', legacyValue: 2, fallback: 3 },
+  {
+    path: 'timing.miningControllerMinBudgetScale',
+    when: value => !Number.isFinite(Number(value)) || Number(value) < 0.85,
+    fallback: 0.85
+  },
   { path: 'log.maxSizeBytes', legacyValue: 10485760, fallback: 52428800 },
   { path: 'antibot.limboFallTicks', legacyValue: 96, fallback: 128 },
   { path: 'antibot.limboFallPacketMs', legacyValue: 25, fallback: 50 },

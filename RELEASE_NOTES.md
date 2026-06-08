@@ -1,11 +1,14 @@
-# ProstoCraft Bot Studio 2.1.0
+# ProstoCraft Bot Studio 3.0.0
 
-Версия `2.1.0` делает крупный апгрейд стабильности, диагностики и обновлений без снижения быстрых настроек копания.
+Версия `3.0.0` закрепляет стабильную быструю добычу на реальном сервере и снижает риск киков за packet-break без урезания быстрых настроек.
 
 ## Что нового
 
-- Добавлен адаптивный packet governor: после реального `too many packets` бот временно уходит в safe/recovery режим и затем плавно возвращает быстрые лимиты.
-- Добавлен adaptive mining controller: бот подбирает устойчивый packet-break предел по подтверждениям сервера, чистит stale pending и сначала восстанавливает mining loop без полного reconnect.
+- Safe packet-профиль стал действительно безопаснее и теперь тоже масштабируется adaptive mining controller.
+- Speed guard получил гистерезис: он не дёргает восстановление из-за мелких колебаний рядом с целью, но быстро реагирует на реальные просадки.
+- При низких подтверждениях packet-break бот профилактически включает packet-safe режим до кика `too many packets`.
+- Offline watchdog больше не перебивает активный reconnect поверх свежей попытки подключения.
+- Проверено на реальном сервере с рабочим конфигом: 15 минут без `too many packets`, без reconnect, скорость держалась около `732-748 б/м`.
 - Runtime snapshot теперь отдаёт `performance`: effective/raw скорость, peak, packet mode и последнюю причину просадки.
 - BotFilter/chat-captcha события получили evidence с source/position/timestamp, чтобы не ловить ложную чат-капчу.
 - Центр обновлений получил online/fallback/cache режимы и понятный источник данных.
@@ -14,6 +17,6 @@
 
 ## Что скачать
 
-- `ProstoCraft.Bot.Studio-Setup-2.1.0.exe` - обычный установщик Windows.
-- `ProstoCraft.Bot.Studio-Mobile-2.1.0.apk` - Android APK.
+- `ProstoCraft.Bot.Studio-Setup-3.0.0.exe` - обычный установщик Windows.
+- `ProstoCraft.Bot.Studio-Mobile-3.0.0.apk` - Android APK.
 - `SHA256SUMS.txt` - контрольные суммы файлов.

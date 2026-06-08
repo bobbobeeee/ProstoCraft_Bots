@@ -1,29 +1,29 @@
 {
   "release": {
-    "tag_name": "v2.1.0",
-    "name": "ProstoCraft Bot Studio 2.1.0",
-    "html_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/tag/v2.1.0",
-    "published_at": "2026-06-08T18:26:20Z",
-    "body": "Adaptive mining controller, packet governor, cleaner runtime lifecycle, update cache/fallback and compact diagnostics.",
+    "tag_name": "v3.0.0",
+    "name": "ProstoCraft Bot Studio 3.0.0",
+    "html_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/tag/v3.0.0",
+    "published_at": "2026-06-08T19:49:54Z",
+    "body": "Stable fast mining profile: safer packet-safe budget, proactive low-confirmation recovery and real-server 732-748 blocks/min smoke test.",
     "assets": [
       {
-        "name": "ProstoCraft.Bot.Studio-Setup-2.1.0.exe",
-        "size": 101325291,
-        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/ProstoCraft.Bot.Studio-Setup-2.1.0.exe"
+        "name": "ProstoCraft.Bot.Studio-Setup-3.0.0.exe",
+        "size": 101283636,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v3.0.0/ProstoCraft.Bot.Studio-Setup-3.0.0.exe"
       },
       {
-        "name": "ProstoCraft.Bot.Studio-Mobile-2.1.0.apk",
-        "size": 185622935,
-        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/ProstoCraft.Bot.Studio-Mobile-2.1.0.apk"
+        "name": "ProstoCraft.Bot.Studio-Mobile-3.0.0.apk",
+        "size": 57775553,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v3.0.0/ProstoCraft.Bot.Studio-Mobile-3.0.0.apk"
       },
       {
         "name": "SHA256SUMS.txt",
-        "size": 0,
-        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v2.1.0/SHA256SUMS.txt"
+        "size": 213,
+        "browser_download_url": "https://github.com/bobbobeeee/ProstoCraft_Bots/releases/download/v3.0.0/SHA256SUMS.txt"
       }
     ]
   },
-  "checksumText": "735f490f568bcf928e167c7ba7fac3055c2e1548769f925f928d8b8cf14f7880  ProstoCraft.Bot.Studio-Setup-2.1.0.exe\n23cb9f52ff3e1c931fac633c544a5116a58c78c0353f4787ff7fd1daf2173791  ProstoCraft.Bot.Studio-Mobile-2.1.0.apk\n",
+  "checksumText": "f584749b587643c7afb945b0ad2455d1f76f3f275f5aaf1e2f07d7e0697f15e9  ProstoCraft.Bot.Studio-Setup-3.0.0.exe\nd09e65ea4c1fbe7c33233136cd1a985e91b8142c57ed3fd7f33494992ea5894f  ProstoCraft.Bot.Studio-Mobile-3.0.0.apk\n",
   "source": {
     "owner": "bobbobeeee",
     "repo": "ProstoCraft_Bots",

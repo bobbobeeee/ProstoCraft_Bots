@@ -22,6 +22,7 @@ const defaultOutputApk = path.join(defaultOutputDir, `ProstoCraft.Bot.Studio-Mob
 const releaseKeystore = path.join(projectRoot, 'android-signing', 'prostocraft-release.keystore')
 const cordovaBuildJson = path.join(cordovaRoot, 'build.json')
 const releaseSigningProperties = path.join(gradleProjectRoot, 'release-signing.properties')
+const appBuildExtrasGradle = path.join(gradleProjectRoot, 'app', 'build-extras.gradle')
 const buildDirsToClean = [
   path.join(gradleProjectRoot, 'build'),
   path.join(gradleProjectRoot, 'app', 'build'),
@@ -202,6 +203,10 @@ function ensureAndroidManifestVersion(manifestXml) {
   return nextManifest
 }
 
+function ensureAndroidManifestNativeLibPackaging(manifestXml) {
+  return manifestXml.replace(/\sandroid:extractNativeLibs=["'][^"']*["']/i, '')
+}
+
 function syncSigningConfigPaths() {
   if (!fs.existsSync(releaseKeystore)) return
 
@@ -360,8 +365,20 @@ function ensureCordovaAndroidManifest() {
 
   let manifestXml = fs.readFileSync(manifestPath, 'utf8')
   manifestXml = ensureAndroidManifestVersion(manifestXml)
+  manifestXml = ensureAndroidManifestNativeLibPackaging(manifestXml)
   manifestXml = ensureAndroidManifestPermission(manifestXml, 'REQUEST_INSTALL_PACKAGES')
   writeFileIfChanged(manifestPath, manifestXml)
+}
+
+function ensureCordovaAndroidBuildExtras() {
+  writeFileIfChanged(appBuildExtrasGradle, `android {
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
+`)
 }
 
 function ensureCordovaAndroidSources() {
@@ -1141,6 +1158,7 @@ function main() {
   syncSigningConfigPaths()
   ensureCordovaAndroidResources()
   ensureCordovaAndroidManifest()
+  ensureCordovaAndroidBuildExtras()
   ensureCordovaAndroidSources()
   patchNodeJsMobilePlugin()
   stopGradle(env)

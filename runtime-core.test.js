@@ -36,8 +36,8 @@ const {
 const baseLimits = {
   fastPerSecond: 300,
   fastBurst: 84,
-  safePerSecond: 240,
-  safeBurst: 68,
+  safePerSecond: 160,
+  safeBurst: 42,
   burstWindowMs: 250,
   targetCooldownMs: 8,
   pendingRetryMs: 32,
@@ -52,12 +52,12 @@ const baseLimits = {
   recordPacketIncident(governor, 'too many packets', { now: 2000, safeModeMs: 120000 })
   const safeLimits = getPacketGovernorLimits(governor, baseLimits, 3000)
   assert.strictEqual(safeLimits.mode, 'safe')
-  assert.strictEqual(safeLimits.perSecond, 240)
+  assert.strictEqual(safeLimits.perSecond, 160)
   assert.strictEqual(safeLimits.repeatsLimit, 1)
 
   const recoveryLimits = getPacketGovernorLimits(governor, baseLimits, 130000)
   assert.strictEqual(recoveryLimits.mode, 'recovering')
-  assert(recoveryLimits.perSecond > 240)
+  assert(recoveryLimits.perSecond > 160)
   assert(recoveryLimits.perSecond < 300)
 
   const fastSnapshot = getPacketGovernorSnapshot(governor, 300000)
@@ -65,7 +65,7 @@ const baseLimits = {
 }
 
 {
-  const controller = createMiningController({ now: 1000, minSamples: 4 })
+  const controller = createMiningController({ now: 1000, minSamples: 4, stalePendingWarn: 4 })
   controller.budgetScale = 0.8
   for (let index = 0; index < 5; index++) {
     const key = `35,8${index},2335`
@@ -79,7 +79,7 @@ const baseLimits = {
 }
 
 {
-  const controller = createMiningController({ now: 1000, minSamples: 4 })
+  const controller = createMiningController({ now: 1000, minSamples: 4, stalePendingWarn: 4 })
   controller.budgetScale = 1
   for (let index = 0; index < 6; index++) {
     recordBreakPacketsSent(controller, { positionKey: `p${index}`, packetCount: 2, now: 1000 + index * 10 })
@@ -88,6 +88,22 @@ const baseLimits = {
   const result = evaluateMiningController(controller, { now: 5000, force: true })
   assert(result.nextScale < 1)
   assert.strictEqual(result.bottleneck, 'pending-packets')
+}
+
+{
+  const controller = createMiningController({ now: 1000, minSamples: 4, stalePendingWarn: 4 })
+  controller.budgetScale = 0.85
+  for (let index = 0; index < 5; index++) {
+    const key = `fresh${index}`
+    recordBreakPacketsSent(controller, { positionKey: key, packetCount: 2, now: 4100 + index * 10 })
+    recordBreakPacketConfirmed(controller, { positionKey: key, now: 4140 + index * 10 })
+  }
+  controller.window.stalePendingCleared = 5
+  const result = evaluateMiningController(controller, { now: 15000, force: true })
+  assert(result.nextScale >= 0.85)
+  assert.strictEqual(result.bottleneck, 'stable')
+  assert.strictEqual(Math.round(result.decisionSnapshot.confirmationRatio * 100), 100)
+  assert.strictEqual(result.decisionSnapshot.window.stalePendingCleared, 5)
 }
 
 {
@@ -116,6 +132,8 @@ const baseLimits = {
   const limits = getMiningControllerLimits(controller, baseLimits)
   assert(limits.fastPerSecond < baseLimits.fastPerSecond)
   assert(limits.fastBurst < baseLimits.fastBurst)
+  assert(limits.safePerSecond < baseLimits.safePerSecond)
+  assert(limits.safeBurst < baseLimits.safeBurst)
 }
 
 {

@@ -3,10 +3,11 @@ const { applyLegacyConfigMigrations } = require('./config-migrations')
 
 const defaults = {
   timing: {
-    breakPacketSafeMaxPerSecond: 240,
-    breakPacketSafeBurstLimit: 68,
+    breakPacketSafeMaxPerSecond: 160,
+    breakPacketSafeBurstLimit: 42,
     speedGuardTargetRatio: 0.9,
-    speedGuardRateWindowMs: 30000
+    speedGuardRateWindowMs: 30000,
+    miningControllerMinBudgetScale: 0.85
   },
   logging: {
     diagnosticMaxValueLength: 1400,
@@ -27,6 +28,7 @@ const config = {
     speedGuardTargetRatio: 0.5,
     speedGuardRateWindowMs: 1000,
     speedGuardReconnectAfterRecoveries: 2,
+    miningControllerMinBudgetScale: 0.55,
     emptyTargetButtonCooldownMs: 123
   },
   logging: {
@@ -42,8 +44,8 @@ const config = {
 
 const migrated = applyLegacyConfigMigrations(config, defaults)
 
-assert.strictEqual(migrated.timing.breakPacketSafeMaxPerSecond, 240)
-assert.strictEqual(migrated.timing.breakPacketSafeBurstLimit, 68)
+assert.strictEqual(migrated.timing.breakPacketSafeMaxPerSecond, 160)
+assert.strictEqual(migrated.timing.breakPacketSafeBurstLimit, 42)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'minBlocksPerMin'), false)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinBlocksPerMin'), false)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinLearnRate'), false)
@@ -52,6 +54,7 @@ assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.antibot, 'limbo
 assert.strictEqual(migrated.timing.speedGuardTargetRatio, 0.9)
 assert.strictEqual(migrated.timing.speedGuardRateWindowMs, 30000)
 assert.strictEqual(migrated.timing.speedGuardReconnectAfterRecoveries, 3)
+assert.strictEqual(migrated.timing.miningControllerMinBudgetScale, 0.85)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'emptyTargetButtonCooldownMs'), false)
 assert.strictEqual(migrated.logging.detailedEvents, true)
 assert.strictEqual(migrated.logging.logServerMessages, true)
