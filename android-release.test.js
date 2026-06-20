@@ -14,7 +14,8 @@ const {
 const { normalizeSpawn } = require('./scripts/android-release/process-runner')
 const {
   findBuiltReleaseApk,
-  signUnsignedApkIfNeeded
+  signUnsignedApkIfNeeded,
+  syncSigningConfigPaths
 } = require('./scripts/android-release/signing')
 const {
   ensureAndroidManifestNativeLibPackaging,
@@ -138,6 +139,47 @@ withTempDir(tempDir => {
     () => signUnsignedApkIfNeeded(path.join(releaseDir, 'app-release-unsigned.apk')),
     /stable release key/
   )
+})
+
+withTempDir(tempDir => {
+  const keystore = path.join(tempDir, 'android-signing', 'prostocraft-release.keystore')
+  const buildJson = path.join(tempDir, 'mobile-cordova', 'build.json')
+  const signingProperties = path.join(
+    tempDir,
+    'mobile-cordova',
+    'platforms',
+    'android',
+    'release-signing.properties'
+  )
+
+  fs.mkdirSync(path.dirname(keystore), { recursive: true })
+  fs.mkdirSync(path.dirname(buildJson), { recursive: true })
+  fs.writeFileSync(keystore, '')
+  fs.writeFileSync(
+    buildJson,
+    JSON.stringify({
+      android: {
+        release: {
+          alias: 'release-alias',
+          keystore: 'old-path.keystore',
+          password: 'key-password',
+          storePassword: 'store-password'
+        }
+      }
+    })
+  )
+
+  syncSigningConfigPaths({
+    cordovaBuildJson: buildJson,
+    releaseKeystore: keystore,
+    releaseSigningProperties: signingProperties
+  })
+
+  const signingText = fs.readFileSync(signingProperties, 'utf8')
+  assert.ok(signingText.includes(`key.store=${toAndroidPath(keystore)}`))
+  assert.ok(signingText.includes('key.alias=release-alias'))
+  assert.ok(signingText.includes('key.store.password=store-password'))
+  assert.ok(signingText.includes('key.alias.password=key-password'))
 })
 
 withTempDir(tempDir => {

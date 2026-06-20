@@ -13,12 +13,31 @@ const { toAndroidPath } = require('./versioning')
 function syncSigningConfigPaths(context) {
   if (!fs.existsSync(context.releaseKeystore)) return
 
+  let releaseConfig = null
   if (fs.existsSync(context.cordovaBuildJson)) {
     const buildConfig = JSON.parse(fs.readFileSync(context.cordovaBuildJson, 'utf8'))
-    if (buildConfig.android?.release?.keystore) {
-      buildConfig.android.release.keystore = toAndroidPath(context.releaseKeystore)
+    releaseConfig = buildConfig.android?.release || null
+    if (releaseConfig?.keystore) {
+      releaseConfig.keystore = toAndroidPath(context.releaseKeystore)
       fs.writeFileSync(context.cordovaBuildJson, `${JSON.stringify(buildConfig, null, 2)}\n`)
     }
+  }
+
+  if (releaseConfig?.alias && releaseConfig?.storePassword && releaseConfig?.password) {
+    fs.mkdirSync(path.dirname(context.releaseSigningProperties), { recursive: true })
+    const signingLines = [
+      `key.store=${toAndroidPath(context.releaseKeystore)}`,
+      `key.alias=${releaseConfig.alias}`,
+      `key.store.password=${releaseConfig.storePassword}`,
+      `key.alias.password=${releaseConfig.password}`
+    ]
+
+    if (releaseConfig.keystoreType) {
+      signingLines.push(`key.store.type=${releaseConfig.keystoreType}`)
+    }
+
+    fs.writeFileSync(context.releaseSigningProperties, `${signingLines.join('\n')}\n`)
+    return
   }
 
   if (fs.existsSync(context.releaseSigningProperties)) {
