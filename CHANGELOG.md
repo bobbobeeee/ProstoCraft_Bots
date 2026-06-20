@@ -2,6 +2,17 @@
 
 Все заметные изменения проекта фиксируются здесь, чтобы на GitHub было понятно, чем отличается каждая сборка.
 
+## 3.0.1 - 2026-06-20
+
+### Рефакторинг
+
+- Добавлены ESLint, Prettier, CI-проверки, source hygiene и JSDoc/checkJs typecheck.
+- Вынесена runtime config-схема с сохранением текущих defaults, legacy fallback и clamp-логики.
+- `bot.js` сокращён до оркестратора, а сервисы добычи, пакетов, логирования, runtime state и UI вынесены в `runtime-core/`.
+- Renderer разбит на модули по вкладкам, настройкам, действиям и отображению без изменения UI.
+- Electron main-процесс разделён на bootstrap, window/tray/update/runtime/config IPC modules с усиленными IPC guards.
+- Android release script разделён на проверяемые модули, а Cordova/Android sync обновлён под новые runtime-core файлы.
+
 ## 3.0.0 - 2026-06-08
 
 ### Стабильная скорость

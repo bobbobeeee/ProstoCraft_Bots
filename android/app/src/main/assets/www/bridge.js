@@ -1,202 +1,202 @@
-(function initBotStudioBridge() {
+;(function initBotStudioBridge() {
   const DEFAULT_CONFIG = {
-      "server": {
-          "host": "mc.prostocraft.com",
-          "port": 25565,
-          "version": "1.16.5",
-          "password": ""
-      },
-      "timing": {
-          "digDelay": 0,
-          "emptyScanDelayMs": 0,
-          "emptyTargetRecheckMs": 5,
-          "emptyTargetLogAfterIdleMs": 15000,
-          "emptyTargetLogIntervalMs": 30000,
-          "entryButtonAfterPressWaitMs": 0,
-          "entryButtonRetryIntervalMs": 250,
-          "entryButtonStartupAttempts": 4,
-          "entryButtonStartupRetryMs": 350,
-          "entryButtonConfirmMs": 900,
-          "entryButtonWatchdogMs": 3000,
-          "emptyTargetButtonRetryMs": 20000,
-          "emptyTargetButtonRetryCooldownMs": 60000,
-          "emptyTargetButtonRetryLimit": 2,
-          "miningLoopIdleMs": 2,
-          "miningBatchSize": 96,
-          "burstBreakWindowMs": 1500,
-          "burstBreakIntervalMs": 1,
-          "burstBreakRepeats": 2,
-          "burstBreakReach": 5.1,
-          "burstLookRefreshMs": 2000,
-          "breakPacketTargetCooldownMs": 12,
-          "breakPacketPendingRetryMs": 32,
-          "breakPacketMinTargetCooldownMs": 8,
-          "breakPacketMaxPerSecond": 300,
-          "breakPacketBurstWindowMs": 250,
-          "breakPacketBurstLimit": 84,
-          "breakPacketSafeMaxPerSecond": 160,
-          "breakPacketSafeBurstLimit": 42,
-          "breakPacketSafeModeMs": 120000,
-          "breakPacketSafeRepeats": 1,
-          "packetGovernorRecoveryMs": 300000,
-          "loginCommandCooldownMs": 7000,
-          "reactiveBreakRepeats": 1,
-          "transientBreakRepeats": 1,
-          "packetBreakConfirmWindowMs": 1500,
-          "blockCountDedupeMs": 75,
-          "packetOnlyMining": true,
-          "packetOnlyFallbackMs": 1200,
-          "miningControllerAdjustIntervalMs": 12000,
-          "miningControllerSoftRecoveryLimit": 3,
-          "miningControllerMinBudgetScale": 0.85,
-          "miningControllerGoodConfirmationRatio": 0.86,
-          "miningControllerBadConfirmationRatio": 0.55,
-          "miningControllerStalePendingMs": 1200,
-          "preemptiveBreakTargets": false,
-          "fastDigConfirmMs": 15,
-          "fastDigRetryMs": 1,
-          "fastDigMinVanillaTimeMs": 0,
-          "postJoinDigStartMs": 25,
-          "postJoinPositionGraceMs": 8000,
-          "stabilityCooldownMs": 0,
-          "connectionStabilityCooldownMs": 0,
-          "stabilityCooldownMaxMs": 0,
-          "miningDiagnosticIntervalMs": 30000,
-          "movingPistonWaitMs": 1,
-          "movingPistonLogAfterIdleMs": 15000,
-          "stuckThreshold": 30000,
-          "restartIfIdleMs": 120000,
-          "menuAttemptLimit": 6,
-          "menuRecoveryBaseMs": 3500,
-          "menuRecoveryStepMs": 2500,
-          "menuRecoveryMaxMs": 18000,
-          "menuRecoveryJitterMs": 2500,
-          "postLimboMenuWatchdogMs": 45000,
-          "clientTimeoutReconnectMs": 6000,
-          "clientTimeoutReconnectJitterMs": 4000,
-          "reconnectRegular": 15000,
-          "reconnectOnInternetLoss": 45000,
-          "internetRetryInterval": 60000,
-          "internetCheckInterval": 30000,
-          "maxInternetRetries": 999,
-          "graceAfterSpawn": 20000,
-          "startStagger": 1000,
-          "startStaggerJitter": 500,
-          "periodicRejoinMs": 3600000,
-          "rotationDelayBetweenBots": 120000,
-          "speedGuardIntervalMs": 5000,
-          "speedGuardStartGraceMs": 20000,
-          "speedGuardLowRateMs": 10000,
-          "speedGuardRecoveryCooldownMs": 5000,
-          "speedGuardTargetRatio": 0.9,
-          "speedGuardRateWindowMs": 30000,
-          "speedGuardRecoveryToleranceRatio": 0.98,
-          "speedGuardRecoveryMinGapBpm": 20,
-          "speedGuardButtonIdleMs": 12000,
-          "speedGuardNoProgressReconnectMs": 20000,
-          "speedGuardReconnectAfterRecoveries": 3,
-          "speedGuardSoftRestartAfterRecoveries": 2,
-          "speedGuardSustainedDropReconnectMs": 45000,
-          "speedGuardSevereDropRatio": 0.85,
-          "speedGuardPeakMemoryMs": 7200000,
-          "stuckRecoveryMs": 60000,
-          "speedGuardAllowedDropPercent": 10
-      },
-      "antibot": {
-          "minInterval": 3000,
-          "maxInterval": 12000,
-          "shortMoveMs": 150,
-          "fallCheckEnabled": false,
-          "fallCheckTimeout": 3000,
-          "limboFallTicks": 128,
-          "limboFallPacketMs": 50,
-          "limboDetectionTimeoutMs": 4500,
-          "limboCompletionGraceMs": 900,
-          "limboPostFallJoinMs": 900,
-          "limboMenuWaitMs": 12000,
-          "scannerPassiveWaitMs": 60000,
-          "scannerRecentPositionMs": 5000,
-          "scannerPositionWaitMs": 2500,
-          "limboServerTimeoutMs": 15000
-      },
-      "menu": {
-          "slot1": 10,
-          "slot2": 13,
-          "hotbarSlot": 0
-      },
-      "globalRestart": {
-          "errorThreshold": 15,
-          "timeWindowMs": 600000,
-          "stopOnNoInternet": false,
-          "noInternetThreshold": 8,
-          "memoryLimitMB": 1024
-      },
-      "position": {
-          "checkInterval": 10000,
-          "returnTimeout": 8000,
-          "farReconnectIdleMs": 30000,
-          "farDistance": 500,
-          "recheckSamples": 3,
-          "recheckDelayMs": 700,
-          "nearMiningExtraReach": 1
-      },
-      "ui": {
-          "renderIntervalMs": 1000,
-          "graphUpdateMs": 15000
-      },
-      "monitor": {
-          "historyLength": 180,
-          "cpuRamHistoryLength": 60
-      },
-      "maintenance": {
-          "cleanupIntervalMs": 3600000,
-          "softRestartMaxPerHour": 2,
-          "offlineWatchdogMs": 90000,
-          "offlineWatchdogIntervalMs": 30000,
-          "onlineMiningStallMs": 90000,
-          "botFilterRetryBaseMs": 8000,
-          "botFilterRetryMaxMs": 120000,
-          "botFilterFallAttemptsBeforeHold": 2,
-          "botFilterFallHoldMs": 1800000,
-          "chatCaptchaReconnectMs": 1800000
-      },
-      "metrics": {
-          "port": 3000
-      },
-      "log": {
-          "maxSizeBytes": 52428800
-      },
-      "features": {
-          "enableAggressiveMining": true,
-          "enableSoftRestart": true,
-          "enableHeapSnapshot": false,
-          "enableActiveFallCheck": true,
-          "enableMetrics": true,
-          "enablePerBotLogs": true,
-          "enableLazyRotation": false,
-          "enablePeriodicRotation": false,
-          "enableSpeedGuard": true,
-          "adaptivePacketGovernorEnabled": true,
-          "adaptiveMiningControllerEnabled": true
-      },
-      "logging": {
-          "level": "info",
-          "logVerbosity": "normal",
-          "toFile": false,
-          "filePath": "bot.log",
-          "debugMode": false,
-          "detailedEvents": false,
-          "logServerMessages": false,
-          "diagnosticMaxValueLength": 1400,
-          "diagnosticPositionIntervalMs": 30000,
-          "diagnosticRepeatSummaryMs": 30000,
-          "diagnosticFullPacketDetails": false
-      },
-      "pause": {
-          "file": "pause.txt",
-          "checkInterval": 1000
-      },
-      "bots": []
+    server: {
+      host: 'mc.prostocraft.com',
+      port: 25565,
+      version: '1.16.5',
+      password: ''
+    },
+    timing: {
+      digDelay: 0,
+      emptyScanDelayMs: 0,
+      emptyTargetRecheckMs: 5,
+      emptyTargetLogAfterIdleMs: 15000,
+      emptyTargetLogIntervalMs: 30000,
+      entryButtonAfterPressWaitMs: 0,
+      entryButtonRetryIntervalMs: 250,
+      entryButtonStartupAttempts: 4,
+      entryButtonStartupRetryMs: 350,
+      entryButtonConfirmMs: 900,
+      entryButtonWatchdogMs: 3000,
+      emptyTargetButtonRetryMs: 20000,
+      emptyTargetButtonRetryCooldownMs: 60000,
+      emptyTargetButtonRetryLimit: 2,
+      miningLoopIdleMs: 2,
+      miningBatchSize: 96,
+      burstBreakWindowMs: 1500,
+      burstBreakIntervalMs: 1,
+      burstBreakRepeats: 2,
+      burstBreakReach: 5.1,
+      burstLookRefreshMs: 2000,
+      breakPacketTargetCooldownMs: 12,
+      breakPacketPendingRetryMs: 32,
+      breakPacketMinTargetCooldownMs: 8,
+      breakPacketMaxPerSecond: 300,
+      breakPacketBurstWindowMs: 250,
+      breakPacketBurstLimit: 84,
+      breakPacketSafeMaxPerSecond: 160,
+      breakPacketSafeBurstLimit: 42,
+      breakPacketSafeModeMs: 120000,
+      breakPacketSafeRepeats: 1,
+      packetGovernorRecoveryMs: 300000,
+      loginCommandCooldownMs: 7000,
+      reactiveBreakRepeats: 1,
+      transientBreakRepeats: 1,
+      packetBreakConfirmWindowMs: 1500,
+      blockCountDedupeMs: 75,
+      packetOnlyMining: true,
+      packetOnlyFallbackMs: 1200,
+      miningControllerAdjustIntervalMs: 12000,
+      miningControllerSoftRecoveryLimit: 3,
+      miningControllerMinBudgetScale: 0.85,
+      miningControllerGoodConfirmationRatio: 0.86,
+      miningControllerBadConfirmationRatio: 0.55,
+      miningControllerStalePendingMs: 1200,
+      preemptiveBreakTargets: false,
+      fastDigConfirmMs: 15,
+      fastDigRetryMs: 1,
+      fastDigMinVanillaTimeMs: 0,
+      postJoinDigStartMs: 25,
+      postJoinPositionGraceMs: 8000,
+      stabilityCooldownMs: 0,
+      connectionStabilityCooldownMs: 0,
+      stabilityCooldownMaxMs: 0,
+      miningDiagnosticIntervalMs: 30000,
+      movingPistonWaitMs: 1,
+      movingPistonLogAfterIdleMs: 15000,
+      stuckThreshold: 30000,
+      restartIfIdleMs: 120000,
+      menuAttemptLimit: 6,
+      menuRecoveryBaseMs: 3500,
+      menuRecoveryStepMs: 2500,
+      menuRecoveryMaxMs: 18000,
+      menuRecoveryJitterMs: 2500,
+      postLimboMenuWatchdogMs: 45000,
+      clientTimeoutReconnectMs: 6000,
+      clientTimeoutReconnectJitterMs: 4000,
+      reconnectRegular: 15000,
+      reconnectOnInternetLoss: 45000,
+      internetRetryInterval: 60000,
+      internetCheckInterval: 30000,
+      maxInternetRetries: 999,
+      graceAfterSpawn: 20000,
+      startStagger: 1000,
+      startStaggerJitter: 500,
+      periodicRejoinMs: 3600000,
+      rotationDelayBetweenBots: 120000,
+      speedGuardIntervalMs: 5000,
+      speedGuardStartGraceMs: 20000,
+      speedGuardLowRateMs: 10000,
+      speedGuardRecoveryCooldownMs: 5000,
+      speedGuardTargetRatio: 0.9,
+      speedGuardRateWindowMs: 30000,
+      speedGuardRecoveryToleranceRatio: 0.98,
+      speedGuardRecoveryMinGapBpm: 20,
+      speedGuardButtonIdleMs: 12000,
+      speedGuardNoProgressReconnectMs: 20000,
+      speedGuardReconnectAfterRecoveries: 3,
+      speedGuardSoftRestartAfterRecoveries: 2,
+      speedGuardSustainedDropReconnectMs: 45000,
+      speedGuardSevereDropRatio: 0.85,
+      speedGuardPeakMemoryMs: 7200000,
+      stuckRecoveryMs: 60000,
+      speedGuardAllowedDropPercent: 10
+    },
+    antibot: {
+      minInterval: 3000,
+      maxInterval: 12000,
+      shortMoveMs: 150,
+      fallCheckEnabled: false,
+      fallCheckTimeout: 3000,
+      limboFallTicks: 128,
+      limboFallPacketMs: 50,
+      limboDetectionTimeoutMs: 4500,
+      limboCompletionGraceMs: 900,
+      limboPostFallJoinMs: 900,
+      limboMenuWaitMs: 12000,
+      scannerPassiveWaitMs: 60000,
+      scannerRecentPositionMs: 5000,
+      scannerPositionWaitMs: 2500,
+      limboServerTimeoutMs: 15000
+    },
+    menu: {
+      slot1: 10,
+      slot2: 13,
+      hotbarSlot: 0
+    },
+    globalRestart: {
+      errorThreshold: 15,
+      timeWindowMs: 600000,
+      stopOnNoInternet: false,
+      noInternetThreshold: 8,
+      memoryLimitMB: 1024
+    },
+    position: {
+      checkInterval: 10000,
+      returnTimeout: 8000,
+      farReconnectIdleMs: 30000,
+      farDistance: 500,
+      recheckSamples: 3,
+      recheckDelayMs: 700,
+      nearMiningExtraReach: 1
+    },
+    ui: {
+      renderIntervalMs: 1000,
+      graphUpdateMs: 15000
+    },
+    monitor: {
+      historyLength: 180,
+      cpuRamHistoryLength: 60
+    },
+    maintenance: {
+      cleanupIntervalMs: 3600000,
+      softRestartMaxPerHour: 2,
+      offlineWatchdogMs: 90000,
+      offlineWatchdogIntervalMs: 30000,
+      onlineMiningStallMs: 90000,
+      botFilterRetryBaseMs: 8000,
+      botFilterRetryMaxMs: 120000,
+      botFilterFallAttemptsBeforeHold: 2,
+      botFilterFallHoldMs: 1800000,
+      chatCaptchaReconnectMs: 1800000
+    },
+    metrics: {
+      port: 3000
+    },
+    log: {
+      maxSizeBytes: 52428800
+    },
+    features: {
+      enableAggressiveMining: true,
+      enableSoftRestart: true,
+      enableHeapSnapshot: false,
+      enableActiveFallCheck: true,
+      enableMetrics: true,
+      enablePerBotLogs: true,
+      enableLazyRotation: false,
+      enablePeriodicRotation: false,
+      enableSpeedGuard: true,
+      adaptivePacketGovernorEnabled: true,
+      adaptiveMiningControllerEnabled: true
+    },
+    logging: {
+      level: 'info',
+      logVerbosity: 'normal',
+      toFile: false,
+      filePath: 'bot.log',
+      debugMode: false,
+      detailedEvents: false,
+      logServerMessages: false,
+      diagnosticMaxValueLength: 1400,
+      diagnosticPositionIntervalMs: 30000,
+      diagnosticRepeatSummaryMs: 30000,
+      diagnosticFullPacketDetails: false
+    },
+    pause: {
+      file: 'pause.txt',
+      checkInterval: 1000
+    },
+    bots: []
   }
 
   const DEFAULT_DESKTOP_SETTINGS = {
@@ -424,9 +424,7 @@
     }
 
     function isEngineAlreadyStartedError(error) {
-      const message = typeof error === 'string'
-        ? error
-        : error?.message
+      const message = typeof error === 'string' ? error : error?.message
 
       return typeof message === 'string' && /engine already started/i.test(message)
     }
@@ -548,39 +546,35 @@
         })
       },
       async saveDesktopSettings(settings) {
-        return parseNativeJson(
-          callNative('saveDesktopSettings', JSON.stringify(settings)),
-          { ...DEFAULT_DESKTOP_SETTINGS }
-        )
+        return parseNativeJson(callNative('saveDesktopSettings', JSON.stringify(settings)), {
+          ...DEFAULT_DESKTOP_SETTINGS
+        })
       },
       async saveConfig(config) {
-        return parseNativeJson(
-          callNative('saveConfig', JSON.stringify(config)),
-          {
-            config,
-            runtime: createEmptyRuntime(
-              'Android-сборка сохраняет конфиг локально, но не запускает встроенный runtime mineflayer.'
-            )
-          }
-        )
+        return parseNativeJson(callNative('saveConfig', JSON.stringify(config)), {
+          config,
+          runtime: createEmptyRuntime(
+            'Android-сборка сохраняет конфиг локально, но не запускает встроенный runtime mineflayer.'
+          )
+        })
       },
       async resetConfig() {
-        return parseNativeJson(
-          callNative('resetConfig'),
-          {
-            config: clone(DEFAULT_CONFIG),
-            runtime: createEmptyRuntime()
-          }
-        )
+        return parseNativeJson(callNative('resetConfig'), {
+          config: clone(DEFAULT_CONFIG),
+          runtime: createEmptyRuntime()
+        })
       },
       async importConfig() {
-        return parseNativeJson(callNative('importConfig'), { canceled: true, reason: 'not_supported' })
+        return parseNativeJson(callNative('importConfig'), {
+          canceled: true,
+          reason: 'not_supported'
+        })
       },
       async exportConfig(config) {
-        return parseNativeJson(
-          callNative('exportConfig', JSON.stringify(config)),
-          { canceled: true, reason: 'not_supported' }
-        )
+        return parseNativeJson(callNative('exportConfig', JSON.stringify(config)), {
+          canceled: true,
+          reason: 'not_supported'
+        })
       },
       async startRuntime() {
         return parseNativeJson(callNative('startRuntime'), createEmptyRuntime())
@@ -617,9 +611,10 @@
   }
 
   function createUnavailableBridge() {
-    const buildError = () => new Error(
-      'Bot Studio bridge is unavailable. Open this interface from the desktop app or Android build.'
-    )
+    const buildError = () =>
+      new Error(
+        'Bot Studio bridge is unavailable. Open this interface from the desktop app or Android build.'
+      )
     const rejectUnavailable = async () => {
       throw buildError()
     }

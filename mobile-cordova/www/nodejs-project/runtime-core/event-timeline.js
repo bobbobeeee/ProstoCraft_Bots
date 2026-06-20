@@ -15,24 +15,19 @@ function createEventTimeline(limit = 80) {
 }
 
 function normalizeSeverity(severity) {
-  const value = String(severity || '').trim().toLowerCase()
+  const value = String(severity || '')
+    .trim()
+    .toLowerCase()
   if (['error', 'warning', 'info', 'success', 'ok'].includes(value)) return value
   return 'info'
 }
 
 function getEventKey(event) {
-  return [
-    event.type || '',
-    event.reason || '',
-    event.source || '',
-    event.message || ''
-  ].join('|')
+  return [event.type || '', event.reason || '', event.source || '', event.message || ''].join('|')
 }
 
 function addTimelineEvent(timeline, event = {}, now = Date.now()) {
-  const target = timeline && typeof timeline === 'object'
-    ? timeline
-    : createEventTimeline()
+  const target = timeline && typeof timeline === 'object' ? timeline : createEventTimeline()
   if (!Array.isArray(target.events)) target.events = []
   target.limit = Math.max(10, Number(target.limit) || 80)
 
@@ -54,7 +49,8 @@ function addTimelineEvent(timeline, event = {}, now = Date.now()) {
   if (
     previous &&
     getEventKey(previous) === getEventKey(normalizedEvent) &&
-    timestampMs - (Number(previous.timestampMs) || 0) <= Math.max(1000, Number(event.dedupeMs) || 30000)
+    timestampMs - (Number(previous.timestampMs) || 0) <=
+      Math.max(1000, Number(event.dedupeMs) || 30000)
   ) {
     previous.repeatCount = (Number(previous.repeatCount) || 1) + 1
     previous.timestamp = normalizedEvent.timestamp
@@ -70,17 +66,21 @@ function addTimelineEvent(timeline, event = {}, now = Date.now()) {
 }
 
 function getTimelineSnapshot(timeline, options = {}) {
-  const target = timeline && typeof timeline === 'object'
-    ? timeline
-    : createEventTimeline()
+  const target = timeline && typeof timeline === 'object' ? timeline : createEventTimeline()
   const limit = Math.max(1, Number(options.limit) || 12)
   const importantOnly = options.importantOnly !== false
   const events = Array.isArray(target.events) ? target.events : []
   const filtered = importantOnly
-    ? events.filter(event => event.severity === 'warning' || event.severity === 'error' || event.type === 'recovery')
+    ? events.filter(
+        event =>
+          event.severity === 'warning' || event.severity === 'error' || event.type === 'recovery'
+      )
     : events
 
-  return filtered.slice(-limit).reverse().map(event => ({ ...event }))
+  return filtered
+    .slice(-limit)
+    .reverse()
+    .map(event => ({ ...event }))
 }
 
 module.exports = {

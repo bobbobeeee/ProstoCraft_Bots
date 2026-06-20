@@ -29,7 +29,10 @@ function createWindow(now = Date.now()) {
 function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
-    adjustIntervalMs: Math.max(1000, Number(options.adjustIntervalMs ?? DEFAULT_ADJUST_INTERVAL_MS) || DEFAULT_ADJUST_INTERVAL_MS),
+    adjustIntervalMs: Math.max(
+      1000,
+      Number(options.adjustIntervalMs ?? DEFAULT_ADJUST_INTERVAL_MS) || DEFAULT_ADJUST_INTERVAL_MS
+    ),
     minBudgetScale: clamp(options.minBudgetScale ?? 0.85, 0.1, 1),
     maxBudgetScale: clamp(options.maxBudgetScale ?? 1, 0.1, 1),
     increaseStep: clamp(options.increaseStep ?? 0.04, 0.01, 0.5),
@@ -72,11 +75,11 @@ function createMiningController(options = {}) {
 }
 
 function normalizeController(controller, options = {}) {
-  const target = controller && typeof controller === 'object'
-    ? controller
-    : createMiningController(options)
+  const target =
+    controller && typeof controller === 'object' ? controller : createMiningController(options)
   target.options = normalizeOptions({ ...target.options, ...options })
-  if (!Number.isFinite(Number(target.budgetScale))) target.budgetScale = target.options.maxBudgetScale
+  if (!Number.isFinite(Number(target.budgetScale)))
+    target.budgetScale = target.options.maxBudgetScale
   if (!Number.isFinite(Number(target.sustainableRate))) target.sustainableRate = 0
   if (!Number.isFinite(Number(target.lastAdjustAt))) target.lastAdjustAt = 0
   if (!Number.isFinite(Number(target.lastBottleneckAt))) target.lastBottleneckAt = 0
@@ -86,7 +89,8 @@ function normalizeController(controller, options = {}) {
   if (!Number.isFinite(Number(target.fallbackDigCount))) target.fallbackDigCount = 0
   if (!Number.isFinite(Number(target.stalePendingCleared))) target.stalePendingCleared = 0
   if (!Number.isFinite(Number(target.packetOnlySoftRecoveries))) target.packetOnlySoftRecoveries = 0
-  if (!Number.isFinite(Number(target.lastPacketOnlySoftRecoveryAt))) target.lastPacketOnlySoftRecoveryAt = 0
+  if (!Number.isFinite(Number(target.lastPacketOnlySoftRecoveryAt)))
+    target.lastPacketOnlySoftRecoveryAt = 0
   if (!(target.pending instanceof Map)) target.pending = new Map()
   if (!target.window || typeof target.window !== 'object') target.window = createWindow()
   if (typeof target.lastBottleneck !== 'string') target.lastBottleneck = 'learning'
@@ -160,7 +164,10 @@ function recordFallbackDig(controller, event = {}) {
 function pruneMiningControllerPending(controller, options = {}) {
   const target = normalizeController(controller)
   const now = Number(options.now) || Date.now()
-  const stalePendingMs = Math.max(100, Number(options.stalePendingMs ?? target.options.stalePendingMs) || target.options.stalePendingMs)
+  const stalePendingMs = Math.max(
+    100,
+    Number(options.stalePendingMs ?? target.options.stalePendingMs) || target.options.stalePendingMs
+  )
   let stale = 0
 
   for (const [key, sentAt] of target.pending.entries()) {
@@ -205,8 +212,10 @@ function getPacketOnlyRecoveryDecision(controller, options = {}) {
     return { action: 'wait', reason: 'packet-confirmation-window' }
   }
 
-  const cooldownReady = now - target.lastPacketOnlySoftRecoveryAt >= target.options.softRecoveryCooldownMs
-  const canSoftRecover = target.packetOnlySoftRecoveries < target.options.softRecoveryLimit && cooldownReady
+  const cooldownReady =
+    now - target.lastPacketOnlySoftRecoveryAt >= target.options.softRecoveryCooldownMs
+  const canSoftRecover =
+    target.packetOnlySoftRecoveries < target.options.softRecoveryLimit && cooldownReady
 
   if (canSoftRecover) {
     return {
@@ -219,9 +228,10 @@ function getPacketOnlyRecoveryDecision(controller, options = {}) {
 
   return {
     action: 'fallback-dig',
-    reason: target.packetOnlySoftRecoveries >= target.options.softRecoveryLimit
-      ? 'soft-recovery-limit'
-      : 'soft-recovery-cooldown',
+    reason:
+      target.packetOnlySoftRecoveries >= target.options.softRecoveryLimit
+        ? 'soft-recovery-limit'
+        : 'soft-recovery-cooldown',
     attempts: target.packetOnlySoftRecoveries,
     pendingCount: target.pending.size
   }
@@ -285,15 +295,20 @@ function evaluateMiningController(controller, options = {}) {
   let nextScale = previousScale
   let bottleneck = 'stable'
   const goodFlow = ratio >= target.options.goodConfirmationRatio && fallbackDigCount === 0
-  const stalePressure = stale >= target.options.stalePendingWarn && ratio < target.options.warnConfirmationRatio
-  const pendingPressure = pendingCount >= target.options.pendingWarn && ratio < target.options.goodConfirmationRatio
+  const stalePressure =
+    stale >= target.options.stalePendingWarn && ratio < target.options.warnConfirmationRatio
+  const pendingPressure =
+    pendingCount >= target.options.pendingWarn && ratio < target.options.goodConfirmationRatio
 
   if (attempts < target.options.minSamples) {
     bottleneck = 'learning'
   } else if (ratio < target.options.badConfirmationRatio || stalePressure) {
     bottleneck = stalePressure ? 'pending-packets' : 'mining-confirmation'
     nextScale -= target.options.decreaseStep
-  } else if (pendingPressure || (latency >= target.options.latencyWarnMs && ratio < target.options.goodConfirmationRatio)) {
+  } else if (
+    pendingPressure ||
+    (latency >= target.options.latencyWarnMs && ratio < target.options.goodConfirmationRatio)
+  ) {
     bottleneck = pendingPressure ? 'pending-packets' : 'mining-confirmation-latency'
     nextScale -= target.options.decreaseStep / 2
   } else if (fallbackDigCount > 0 && ratio < target.options.warnConfirmationRatio) {
@@ -306,14 +321,19 @@ function evaluateMiningController(controller, options = {}) {
     bottleneck = 'mining-confirmation'
   }
 
-  target.budgetScale = clamp(nextScale, target.options.minBudgetScale, target.options.maxBudgetScale)
+  target.budgetScale = clamp(
+    nextScale,
+    target.options.minBudgetScale,
+    target.options.maxBudgetScale
+  )
   target.lastAdjustAt = now
   setBottleneck(target, bottleneck, now)
 
   if (snapshot.window.ratePerMinute > 0) {
-    target.sustainableRate = target.sustainableRate > 0
-      ? (target.sustainableRate * 0.7) + (snapshot.window.ratePerMinute * 0.3)
-      : snapshot.window.ratePerMinute
+    target.sustainableRate =
+      target.sustainableRate > 0
+        ? target.sustainableRate * 0.7 + snapshot.window.ratePerMinute * 0.3
+        : snapshot.window.ratePerMinute
   }
 
   const decisionSnapshot = {
@@ -326,7 +346,9 @@ function evaluateMiningController(controller, options = {}) {
   target.window = createWindow(now)
 
   return {
-    changed: Math.abs(target.budgetScale - previousScale) >= 0.001 || bottleneck !== snapshot.lastMiningBottleneck,
+    changed:
+      Math.abs(target.budgetScale - previousScale) >= 0.001 ||
+      bottleneck !== snapshot.lastMiningBottleneck,
     previousScale,
     nextScale: target.budgetScale,
     bottleneck,
@@ -339,7 +361,11 @@ function recordMiningPacketIncident(controller, reason = 'too many packets', opt
   const target = normalizeController(controller)
   const now = Number(options.now) || Date.now()
   const step = Math.max(target.options.decreaseStep, Number(options.decreaseStep) || 0)
-  target.budgetScale = clamp(target.budgetScale - step, target.options.minBudgetScale, target.options.maxBudgetScale)
+  target.budgetScale = clamp(
+    target.budgetScale - step,
+    target.options.minBudgetScale,
+    target.options.maxBudgetScale
+  )
   target.lastAdjustAt = now
   setBottleneck(target, reason || 'packet-budget', now)
   return target
@@ -348,14 +374,21 @@ function recordMiningPacketIncident(controller, reason = 'too many packets', opt
 function getMiningControllerLimits(controller, baseLimits = {}) {
   const target = normalizeController(controller)
   if (!target.options.enabled) return { ...baseLimits }
-  const scale = clamp(target.budgetScale, target.options.minBudgetScale, target.options.maxBudgetScale)
+  const scale = clamp(
+    target.budgetScale,
+    target.options.minBudgetScale,
+    target.options.maxBudgetScale
+  )
 
   const scaleLimit = (value, min = 1) => Math.max(min, Math.round((Number(value) || min) * scale))
   return {
     ...baseLimits,
     fastPerSecond: scaleLimit(baseLimits.fastPerSecond ?? baseLimits.perSecond, 1),
     fastBurst: scaleLimit(baseLimits.fastBurst ?? baseLimits.burst, 1),
-    safePerSecond: scaleLimit(baseLimits.safePerSecond ?? baseLimits.fastPerSecond ?? baseLimits.perSecond, 1),
+    safePerSecond: scaleLimit(
+      baseLimits.safePerSecond ?? baseLimits.fastPerSecond ?? baseLimits.perSecond,
+      1
+    ),
     safeBurst: scaleLimit(baseLimits.safeBurst ?? baseLimits.fastBurst ?? baseLimits.burst, 1)
   }
 }

@@ -1,5 +1,9 @@
 const assert = require('assert')
-const { computeBotRateStats, formatBlocksPerMinute, formatBlocksPerSecond } = require('./monitoring')
+const {
+  computeBotRateStats,
+  formatBlocksPerMinute,
+  formatBlocksPerSecond
+} = require('./monitoring')
 
 const now = 100000
 

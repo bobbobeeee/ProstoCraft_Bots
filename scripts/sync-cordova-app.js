@@ -5,14 +5,42 @@ const projectRoot = path.resolve(__dirname, '..')
 const cordovaRoot = path.join(projectRoot, 'mobile-cordova')
 const rendererSource = path.join(projectRoot, 'desktop', 'renderer')
 const rendererTarget = path.join(cordovaRoot, 'www')
-const platformRendererTarget = path.join(cordovaRoot, 'platforms', 'android', 'app', 'src', 'main', 'assets', 'www')
-const platformAssetsRoot = path.join(cordovaRoot, 'platforms', 'android', 'app', 'src', 'main', 'assets')
+const platformRendererTarget = path.join(
+  cordovaRoot,
+  'platforms',
+  'android',
+  'app',
+  'src',
+  'main',
+  'assets',
+  'www'
+)
+const platformAssetsRoot = path.join(
+  cordovaRoot,
+  'platforms',
+  'android',
+  'app',
+  'src',
+  'main',
+  'assets'
+)
 const platformWwwSource = path.join(cordovaRoot, 'platforms', 'android', 'platform_www')
 const runtimeSource = path.join(projectRoot, 'mobile-cordova-src', 'nodejs-project')
 const runtimeTarget = path.join(rendererTarget, 'nodejs-project')
 const platformRuntimeTarget = path.join(platformRendererTarget, 'nodejs-project')
 const runtimeInstallSource = path.join(cordovaRoot, 'nodejs-project')
-const rootRuntimeFiles = ['bot.js', 'bot-filter.js', 'limbo-filter.js', 'reconnect-policy.js', 'speed-guard.js', 'stability-center.js', 'monitoring.js', 'update-service.js', 'config.json']
+const rootRuntimeFiles = [
+  'bot.js',
+  'bot-filter.js',
+  'limbo-filter.js',
+  'reconnect-policy.js',
+  'speed-guard.js',
+  'stability-center.js',
+  'config-migrations.js',
+  'monitoring.js',
+  'update-service.js',
+  'config.json'
+]
 const rootRuntimeDirectories = ['runtime-core']
 const cordovaWebRuntimeFiles = ['cordova.js', 'cordova_plugins.js']
 const runtimePrunedDirectories = new Set([
@@ -50,9 +78,7 @@ const minecraftDataRuntimePcDirs = new Set([
   '1.16.4',
   '1.16.5'
 ])
-const minecraftDataRuntimeBedrockDirs = new Set([
-  'common'
-])
+const minecraftDataRuntimeBedrockDirs = new Set(['common'])
 
 function ensureProjectExists() {
   if (!fs.existsSync(cordovaRoot)) {
@@ -91,10 +117,7 @@ function copyRecursive(sourcePath, targetPath) {
   if (stats.isDirectory()) {
     ensureDirectory(targetPath)
     for (const entry of fs.readdirSync(sourcePath)) {
-      copyRecursive(
-        path.join(sourcePath, entry),
-        path.join(targetPath, entry)
-      )
+      copyRecursive(path.join(sourcePath, entry), path.join(targetPath, entry))
     }
     return
   }
@@ -212,7 +235,7 @@ function syncRuntimeDependencies() {
   } else {
     console.warn(
       `Runtime node_modules were not found in ${runtimeSource} or ${runtimeInstallSource}. ` +
-      'Android runtime may fail to resolve packages until dependencies are installed.'
+        'Android runtime may fail to resolve packages until dependencies are installed.'
     )
   }
 
@@ -252,10 +275,7 @@ function main() {
   copyRecursive(runtimeSource, runtimeTarget)
 
   for (const fileName of rootRuntimeFiles) {
-    fs.copyFileSync(
-      path.join(projectRoot, fileName),
-      path.join(runtimeTarget, fileName)
-    )
+    fs.copyFileSync(path.join(projectRoot, fileName), path.join(runtimeTarget, fileName))
   }
 
   for (const directoryName of rootRuntimeDirectories) {
@@ -274,10 +294,7 @@ function main() {
     ensureDirectory(platformRuntimeTarget)
 
     for (const fileName of rootRuntimeFiles) {
-      fs.copyFileSync(
-        path.join(projectRoot, fileName),
-        path.join(platformRuntimeTarget, fileName)
-      )
+      fs.copyFileSync(path.join(projectRoot, fileName), path.join(platformRuntimeTarget, fileName))
     }
 
     for (const directoryName of rootRuntimeDirectories) {

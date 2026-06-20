@@ -28,10 +28,7 @@ function copyRecursive(sourcePath, targetPath) {
   if (stats.isDirectory()) {
     fs.mkdirSync(targetPath, { recursive: true })
     for (const entry of fs.readdirSync(sourcePath)) {
-      copyRecursive(
-        path.join(sourcePath, entry),
-        path.join(targetPath, entry)
-      )
+      copyRecursive(path.join(sourcePath, entry), path.join(targetPath, entry))
     }
     return
   }

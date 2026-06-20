@@ -3,14 +3,11 @@ const path = require('path')
 const { spawn } = require('child_process')
 const mc = require('minecraft-protocol')
 const Vec3 = require('vec3')
-const {
-  LIMBO_FILTER_DEFAULTS,
-  getMinimumCheckMs,
-  validateFallPacket
-} = require('../limbo-filter')
+const { LIMBO_FILTER_DEFAULTS, getMinimumCheckMs, validateFallPacket } = require('../limbo-filter')
 
 const projectRoot = path.resolve(__dirname, '..')
-const userConfigPath = process.env.BOT_TEST_SOURCE_CONFIG ||
+const userConfigPath =
+  process.env.BOT_TEST_SOURCE_CONFIG ||
   path.join(process.env.APPDATA || '', 'autominerv2', 'runtime', 'config.json')
 const testRoot = path.join(projectRoot, '.codex-temp', 'local-bot-test')
 const testConfigPath = path.join(testRoot, 'config.json')
@@ -110,7 +107,10 @@ function createWorkChunkPacket(config, mcData) {
 
   if (botConfig?.entryButton?.enabled) {
     const button = botConfig.entryButton
-    chunk.setBlockStateId(new Vec3(localCoord(button.x), Math.floor(button.y), localCoord(button.z)), buttonStateId)
+    chunk.setBlockStateId(
+      new Vec3(localCoord(button.x), Math.floor(button.y), localCoord(button.z)),
+      buttonStateId
+    )
   }
 
   return {
@@ -136,7 +136,9 @@ function startLocalServer(config) {
     x: Number(process.env.BOT_TEST_LIMBO_X ?? 0),
     y: Number(process.env.BOT_TEST_LIMBO_Y ?? LIMBO_FILTER_DEFAULTS.fallingCheckTicks * 4),
     z: Number(process.env.BOT_TEST_LIMBO_Z ?? 0),
-    teleportId: Number(process.env.BOT_TEST_LIMBO_TELEPORT_ID ?? LIMBO_FILTER_DEFAULTS.fallbackTeleportId)
+    teleportId: Number(
+      process.env.BOT_TEST_LIMBO_TELEPORT_ID ?? LIMBO_FILTER_DEFAULTS.fallbackTeleportId
+    )
   }
   const workChunkPacket = createWorkChunkPacket(config, mcData)
   const events = []
@@ -205,11 +207,16 @@ function startLocalServer(config) {
       limboState.failed = true
       events.push(`limbo-fail: ${client.username} ${reason} ${JSON.stringify(details)}`)
       if (scenario === 'captcha_on_position_failed') {
-        client.write('chat', chatPacket('Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.', 0))
+        client.write(
+          'chat',
+          chatPacket('Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.', 0)
+        )
         return
       }
       client.write('kick_disconnect', {
-        reason: JSON.stringify({ text: 'AntiBot\n\nFalling Check was failed.\nPlease, rejoin the server.' })
+        reason: JSON.stringify({
+          text: 'AntiBot\n\nFalling Check was failed.\nPlease, rejoin the server.'
+        })
       })
       client.end('limbo-failed')
     }
@@ -217,7 +224,9 @@ function startLocalServer(config) {
     function finishLimbo(source) {
       if (limboState.completed || limboState.failed || client.ended) return
       limboState.completed = true
-      events.push(`limbo-pass: ${client.username} source=${source} packets=${limboState.packetCount}`)
+      events.push(
+        `limbo-pass: ${client.username} source=${source} packets=${limboState.packetCount}`
+      )
       client.write('chat', chatPacket('Проверка завершена. Игрок отслеживается', 0))
       client.write('position', {
         x: stand.x,
@@ -280,12 +289,16 @@ function startLocalServer(config) {
         return
       }
 
-      const validation = validateFallPacket(packet, {
-        validX: limboState.validX,
-        validZ: limboState.validZ,
-        lastY: limboState.lastY,
-        tick: limboState.tick
-      }, LIMBO_FILTER_DEFAULTS)
+      const validation = validateFallPacket(
+        packet,
+        {
+          validX: limboState.validX,
+          validZ: limboState.validZ,
+          lastY: limboState.lastY,
+          tick: limboState.tick
+        },
+        LIMBO_FILTER_DEFAULTS
+      )
 
       if (!validation.ok) {
         failLimbo(validation.reason, validation)
@@ -328,25 +341,35 @@ function startLocalServer(config) {
           flags: 0,
           teleportId: fallingCoords.teleportId
         })
-        events.push(`server-position: limbo ${fallingCoords.x},${fallingCoords.y},${fallingCoords.z} to ${client.username}`)
+        events.push(
+          `server-position: limbo ${fallingCoords.x},${fallingCoords.y},${fallingCoords.z} to ${client.username}`
+        )
       }
     }, 250)
 
     setTimeout(() => {
       if (client.ended) return
       if (scenario === 'immediate_chat_captcha') {
-        client.write('chat', chatPacket('Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.', 0))
+        client.write(
+          'chat',
+          chatPacket('Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.', 0)
+        )
         events.push(`server-chat: immediate-captcha to ${client.username}`)
         return
       }
-      client.write('chat', chatPacket('Сканер | Пожалуйста, дождитесь окончания проверки и не двигайтесь', 0))
+      client.write(
+        'chat',
+        chatPacket('Сканер | Пожалуйста, дождитесь окончания проверки и не двигайтесь', 0)
+      )
       events.push(`server-chat: fall-wait to ${client.username}`)
     }, 500)
 
     setTimeout(() => {
       if (!client.ended && !limboState.completed && !limboState.failed && scenario === 'timeout') {
         client.write('kick_disconnect', {
-          reason: JSON.stringify({ text: 'AntiBot\n\nYou have exceeded the maximum Bot-Filter check time.\nPlease, rejoin the server.' })
+          reason: JSON.stringify({
+            text: 'AntiBot\n\nYou have exceeded the maximum Bot-Filter check time.\nPlease, rejoin the server.'
+          })
         })
         client.end('limbo-timeout')
         events.push(`limbo-timeout: ${client.username}`)
@@ -364,7 +387,9 @@ function startLocalServer(config) {
         const count = (fallCounters.get(client.username) || 0) + 1
         fallCounters.set(client.username, count)
         if (count <= 3 || count % 20 === 0) {
-          events.push(`client-fall-position: ${client.username} y=${Number(packet.y).toFixed(2)} #${count}`)
+          events.push(
+            `client-fall-position: ${client.username} y=${Number(packet.y).toFixed(2)} #${count}`
+          )
         }
       }
       handleFallPacket(packet, 'position')
@@ -374,7 +399,9 @@ function startLocalServer(config) {
         const count = (fallCounters.get(client.username) || 0) + 1
         fallCounters.set(client.username, count)
         if (count <= 3 || count % 20 === 0) {
-          events.push(`client-fall-position-look: ${client.username} y=${Number(packet.y).toFixed(2)} #${count}`)
+          events.push(
+            `client-fall-position-look: ${client.username} y=${Number(packet.y).toFixed(2)} #${count}`
+          )
         }
       }
       handleFallPacket(packet, 'position_look')
@@ -432,8 +459,10 @@ function tail(filePath, lines = 80) {
 
 function importantBotLogTail(filePath, lines = 80) {
   if (!fs.existsSync(filePath)) return ''
-  const importantPattern = /\] \[(INFO|SUCC|WARN|ERR )\].*(Сервер:|Запуск|Подключен|BotFilter evidence|тип проверки|LimboFilter|Зашёл на подсервер|Кнопка генератора|Запускаю новый движок|Speed-guard|Нет доступных|Добыто|RATE\/MIN|ERR|WARN|Не удалось|Позиция подтверждена)/
-  return fs.readFileSync(filePath, 'utf8')
+  const importantPattern =
+    /\] \[(INFO|SUCC|WARN|ERR )\].*(Сервер:|Запуск|Подключен|BotFilter evidence|тип проверки|LimboFilter|Зашёл на подсервер|Кнопка генератора|Запускаю новый движок|Speed-guard|Нет доступных|Добыто|RATE\/MIN|ERR|WARN|Не удалось|Позиция подтверждена)/
+  return fs
+    .readFileSync(filePath, 'utf8')
     .split(/\r?\n/)
     .filter(line => importantPattern.test(line))
     .slice(-lines)
@@ -471,20 +500,23 @@ async function main() {
 
   let stdout = ''
   let stderr = ''
-  botProcess.stdout.on('data', chunk => { stdout += chunk.toString() })
-  botProcess.stderr.on('data', chunk => { stderr += chunk.toString() })
+  botProcess.stdout.on('data', chunk => {
+    stdout += chunk.toString()
+  })
+  botProcess.stderr.on('data', chunk => {
+    stderr += chunk.toString()
+  })
 
   await sleep(durationMs)
 
   if (!botProcess.killed) {
     botProcess.kill('SIGTERM')
   }
-  await Promise.race([
-    new Promise(resolve => botProcess.once('exit', resolve)),
-    sleep(3000)
-  ])
+  await Promise.race([new Promise(resolve => botProcess.once('exit', resolve)), sleep(3000)])
   if (!botProcess.killed) {
-    try { botProcess.kill('SIGKILL') } catch (error) {}
+    try {
+      botProcess.kill('SIGKILL')
+    } catch (error) {}
   }
 
   await new Promise(resolve => {
@@ -497,7 +529,9 @@ async function main() {
   const combined = `${botLog}\n${chatLog}\n${stdout}\n${stderr}`
   const chatCaptchaDetected = /чат-капча|chat-captcha|введите капчу в чат/i.test(combined)
   const limboPassed = events.some(event => event.startsWith('limbo-pass:'))
-  const limboFailed = events.some(event => event.startsWith('limbo-fail:') || event.startsWith('limbo-timeout:'))
+  const limboFailed = events.some(
+    event => event.startsWith('limbo-fail:') || event.startsWith('limbo-timeout:')
+  )
 
   console.log('=== LOCAL BOT TEST ===')
   console.log(`sourceConfig=${userConfigPath}`)

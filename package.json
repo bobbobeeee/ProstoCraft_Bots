@@ -1,6 +1,6 @@
 {
   "name": "autominerv2",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Desktop launcher and config studio for ProstoCraft mining bots",
   "main": "desktop/main.js",
   "scripts": {
@@ -11,11 +11,15 @@
     "android:sync": "node scripts/sync-android-assets.js",
     "cordova:sync": "node scripts/sync-cordova-app.js",
     "android:build:release": "node scripts/build-cordova-android-release.js",
-    "check": "node --check bot.js && node --check bot-filter.js && node --check limbo-filter.js && node --check reconnect-policy.js && node --check speed-guard.js && node --check stability-center.js && node --check config-migrations.js && node --check update-service.js && node --check runtime-core/packet-governor.js && node --check runtime-core/mining-controller.js && node --check runtime-core/lifecycle-state.js && node --check runtime-core/event-timeline.js && node --check runtime-core/captcha-evidence.js && node --check desktop/main.js && node --check desktop/preload.js && node --check desktop/renderer/bridge.js && node --check desktop/renderer/app.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/check-source-hygiene.js && node --check scripts/run-local-bot-test.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && node scripts/check-source-hygiene.js",
+    "check": "node --check bot.js && node --check bot-filter.js && node --check limbo-filter.js && node --check reconnect-policy.js && node --check speed-guard.js && node --check stability-center.js && node --check config-migrations.js && node --check update-service.js && node --check runtime-core/packet-governor.js && node --check runtime-core/packet-break-tracker.js && node --check runtime-core/mining-controller.js && node --check runtime-core/lifecycle-state.js && node --check runtime-core/event-timeline.js && node --check runtime-core/captcha-evidence.js && node --check runtime-core/client-packets.js && node --check runtime-core/bot-session.js && node --check runtime-core/config-schema.js && node --check runtime-core/minecraft-text.js && node --check runtime-core/position-guard.js && node --check runtime-core/process-guard.js && node --check runtime-core/runtime-formatters.js && node --check runtime-core/runtime-logger.js && node --check runtime-core/runtime-manager.js && node --check runtime-core/runtime-state.js && node --check runtime-core/runtime-ui.js && node --check desktop/main.js && node --check desktop/main/app-bootstrap.js && node --check desktop/main/config-store.js && node --check desktop/main/constants.js && node --check desktop/main/desktop-settings.js && node --check desktop/main/dialog-actions.js && node --check desktop/main/ipc-handlers.js && node --check desktop/main/ipc-security.js && node --check desktop/main/json-store.js && node --check desktop/main/paths.js && node --check desktop/main/runtime-controller.js && node --check desktop/main/tray-controller.js && node --check desktop/main/update-controller.js && node --check desktop/main/window-controller.js && node --check desktop/preload.js && node --check desktop/renderer/app-actions.js && node --check desktop/renderer/app-bots-view.js && node --check desktop/renderer/app-chrome-view.js && node --check desktop/renderer/app-coordinate-utils.js && node --check desktop/renderer/app-dashboard-view.js && node --check desktop/renderer/app-listeners.js && node --check desktop/renderer/app-logs-about-view.js && node --check desktop/renderer/app-mobile-view.js && node --check desktop/renderer/app-settings-schema.js && node --check desktop/renderer/app-settings-timing.js && node --check desktop/renderer/app-settings-values.js && node --check desktop/renderer/app-settings-view.js && node --check desktop/renderer/app-state-utils.js && node --check desktop/renderer/app-update-actions.js && node --check desktop/renderer/app-updates-view.js && node --check desktop/renderer/app-validation.js && node --check desktop/renderer/app-view-utils.js && node --check desktop/renderer/app.js && node --check desktop/renderer/bridge.js && node --check scripts/android-release/android-tools.js && node --check scripts/android-release/build-pipeline.js && node --check scripts/android-release/context.js && node --check scripts/android-release/cordova-android-project.js && node --check scripts/android-release/fs-utils.js && node --check scripts/android-release/nodejs-plugin-patcher.js && node --check scripts/android-release/process-runner.js && node --check scripts/android-release/runtime-keepalive-service-source.js && node --check scripts/android-release/signing.js && node --check scripts/android-release/versioning.js && node --check scripts/sync-android-assets.js && node --check scripts/sync-cordova-app.js && node --check scripts/build-cordova-android-release.js && node --check scripts/check-source-hygiene.js && node --check scripts/run-local-bot-test.js && node --check mobile-cordova-src/nodejs-project/mobile-runtime.js && npm run typecheck && node scripts/check-source-hygiene.js",
+    "typecheck": "tsc -p tsconfig.checkjs.json",
+    "lint": "eslint . --cache",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
     "dist:win": "electron-builder --win nsis --publish never",
     "dist:win:installer": "electron-builder --win nsis --publish never",
     "dist:win:release": "electron-builder --win nsis --publish never",
-    "test": "node monitoring.test.js && node bot-filter.test.js && node limbo-filter.test.js && node reconnect-policy.test.js && node speed-guard.test.js && node stability-center.test.js && node config-migrations.test.js && node update-service.test.js && node runtime-core.test.js && npm run check"
+    "test": "node monitoring.test.js && node bot-filter.test.js && node limbo-filter.test.js && node reconnect-policy.test.js && node speed-guard.test.js && node stability-center.test.js && node config-migrations.test.js && node config-schema.test.js && node runtime-formatters.test.js && node runtime-logger.test.js && node runtime-state.test.js && node packet-break-tracker.test.js && node minecraft-text.test.js && node position-guard.test.js && node client-packets.test.js && node bot-session.test.js && node runtime-manager.test.js && node process-guard.test.js && node runtime-ui.test.js && node update-service.test.js && node renderer-modules.test.js && node desktop-main.test.js && node android-release.test.js && node runtime-core.test.js && node characterization.test.js && npm run check"
   },
   "repository": {
     "type": "git",
@@ -36,9 +40,15 @@
     "vec3": "^0.1.10"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.0.0",
     "cordova": "^12.0.0",
     "electron": "^37.2.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3"
   },
   "build": {
     "appId": "com.prostocraft.botstudio",

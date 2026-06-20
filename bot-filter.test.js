@@ -9,7 +9,7 @@ const {
 const chatCaptcha = 'Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.'
 const fallWait = 'Сканер | Пожалуйста, дождитесь окончания проверки и не двигайтесь'
 const englishCaptcha = 'LimboFilter Please, solve the captcha, you have 2 attempts.'
-const englishFallWait = 'LimboFilter Bot-Filter check was started, please wait and don\'t move..'
+const englishFallWait = "LimboFilter Bot-Filter check was started, please wait and don't move.."
 
 assert.strictEqual(isChatCaptchaText(chatCaptcha), true)
 assert.strictEqual(classifyBotFilterMessage(chatCaptcha), 'chat-captcha')

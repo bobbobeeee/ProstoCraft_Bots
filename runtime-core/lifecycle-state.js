@@ -24,10 +24,15 @@ function createLifecycleState(initialState = 'connecting', now = Date.now()) {
   }
 }
 
-function transitionLifecycle(lifecycle, nextState, source = 'runtime', details = {}, now = Date.now()) {
-  const target = lifecycle && typeof lifecycle === 'object'
-    ? lifecycle
-    : createLifecycleState('connecting', now)
+function transitionLifecycle(
+  lifecycle,
+  nextState,
+  source = 'runtime',
+  details = {},
+  now = Date.now()
+) {
+  const target =
+    lifecycle && typeof lifecycle === 'object' ? lifecycle : createLifecycleState('connecting', now)
   const normalized = normalizeLifecycleState(nextState)
   const timestamp = Number(now) || Date.now()
 
@@ -46,9 +51,8 @@ function transitionLifecycle(lifecycle, nextState, source = 'runtime', details =
 }
 
 function getLifecycleSnapshot(lifecycle, now = Date.now()) {
-  const target = lifecycle && typeof lifecycle === 'object'
-    ? lifecycle
-    : createLifecycleState('connecting', now)
+  const target =
+    lifecycle && typeof lifecycle === 'object' ? lifecycle : createLifecycleState('connecting', now)
   const timestamp = Number(now) || Date.now()
 
   return {

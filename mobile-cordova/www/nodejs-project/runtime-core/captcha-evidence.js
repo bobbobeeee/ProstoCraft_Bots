@@ -28,12 +28,14 @@ function classifyCaptchaEvidence(text) {
 function createCaptchaEvidence(options = {}) {
   const timestampMs = Number(options.timestampMs || options.now) || Date.now()
   const text = normalizeEvidenceText(options.text || options.rawText || '')
-  const kind = options.kind && options.kind !== 'none'
-    ? String(options.kind)
-    : classifyCaptchaEvidence(text)
-  const position = String(options.position || '').trim().toLowerCase()
+  const kind =
+    options.kind && options.kind !== 'none' ? String(options.kind) : classifyCaptchaEvidence(text)
+  const position = String(options.position || '')
+    .trim()
+    .toLowerCase()
   const source = String(options.source || '').trim()
-  const visibleChat = options.visibleChat === true || ['chat', 'system', 'unknown'].includes(position)
+  const visibleChat =
+    options.visibleChat === true || ['chat', 'system', 'unknown'].includes(position)
 
   return {
     kind,
@@ -52,9 +54,8 @@ function createCaptchaEvidence(options = {}) {
 }
 
 function validateCaptchaEvidence(evidence, requiredKind = '') {
-  const target = evidence && typeof evidence === 'object'
-    ? { ...evidence }
-    : createCaptchaEvidence()
+  const target =
+    evidence && typeof evidence === 'object' ? { ...evidence } : createCaptchaEvidence()
   const expectedKind = requiredKind ? String(requiredKind) : target.kind
 
   if (!target.text) {

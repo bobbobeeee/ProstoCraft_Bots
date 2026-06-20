@@ -10,10 +10,18 @@ module.exports = async function afterPackIcons(context) {
   const projectDir = context.projectDir || context.packager?.projectDir || process.cwd()
   const iconPath = path.join(projectDir, 'build', 'icon.ico')
   const exePath = path.join(context.appOutDir, 'ProstoCraft Bot Studio.exe')
-  const rceditPath = path.join(projectDir, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe')
+  const rceditPath = path.join(
+    projectDir,
+    'node_modules',
+    'electron-winstaller',
+    'vendor',
+    'rcedit.exe'
+  )
 
   if (!fs.existsSync(iconPath) || !fs.existsSync(exePath) || !fs.existsSync(rceditPath)) {
-    throw new Error(`Не удалось вшить иконку: icon=${fs.existsSync(iconPath)}, exe=${fs.existsSync(exePath)}, rcedit=${fs.existsSync(rceditPath)}`)
+    throw new Error(
+      `Не удалось вшить иконку: icon=${fs.existsSync(iconPath)}, exe=${fs.existsSync(exePath)}, rcedit=${fs.existsSync(rceditPath)}`
+    )
   }
 
   const result = spawnSync(rceditPath, [exePath, '--set-icon', iconPath], {

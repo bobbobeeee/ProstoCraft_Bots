@@ -1,7 +1,10 @@
 const BOT_FILTER_RETRY_RESET_MS = 10 * 60 * 1000
 
 function normalizeBotFilterText(text) {
-  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function isChatCaptchaText(text) {
@@ -9,7 +12,8 @@ function isChatCaptchaText(text) {
   const hasCaptcha = normalized.includes('капч') || normalized.includes('captcha')
   const asksInChat =
     (normalized.includes('введите') && normalized.includes('чат')) ||
-    (normalized.includes('enter') && (normalized.includes('chat') || normalized.includes('captcha'))) ||
+    (normalized.includes('enter') &&
+      (normalized.includes('chat') || normalized.includes('captcha'))) ||
     normalized.includes('please solve') ||
     normalized.includes('решите') ||
     normalized.includes('solve')
@@ -35,7 +39,7 @@ function isScannerWaitText(text) {
     normalized.includes('please wait')
   const noMove =
     normalized.includes('не двигайтесь') ||
-    normalized.includes('don\'t move') ||
+    normalized.includes("don't move") ||
     normalized.includes('do not move')
 
   return Boolean(hasScanner && waitForCheck && noMove)
@@ -66,11 +70,17 @@ function isFallCheckFailureReason(reason) {
 function calculateBotFilterReconnectDelay(options = {}) {
   const now = Number(options.now ?? Date.now())
   const previousFailureAt = Number(options.lastFailureAt) || 0
-  const retryResetMs = Math.max(1, Number(options.retryResetMs ?? BOT_FILTER_RETRY_RESET_MS) || BOT_FILTER_RETRY_RESET_MS)
+  const retryResetMs = Math.max(
+    1,
+    Number(options.retryResetMs ?? BOT_FILTER_RETRY_RESET_MS) || BOT_FILTER_RETRY_RESET_MS
+  )
   const retryBaseMs = Math.max(1, Number(options.retryBaseMs ?? 8000) || 8000)
   const retryMaxMs = Math.max(retryBaseMs, Number(options.retryMaxMs ?? 120000) || 120000)
   const fallAttemptsBeforeHold = Math.max(1, Number(options.fallAttemptsBeforeHold ?? 2) || 2)
-  const fallHoldMs = Math.max(retryMaxMs, Number(options.fallHoldMs ?? 30 * 60 * 1000) || 30 * 60 * 1000)
+  const fallHoldMs = Math.max(
+    retryMaxMs,
+    Number(options.fallHoldMs ?? 30 * 60 * 1000) || 30 * 60 * 1000
+  )
   const random = typeof options.random === 'function' ? options.random : Math.random
   let retryCount = Number(options.retryCount) || 0
 

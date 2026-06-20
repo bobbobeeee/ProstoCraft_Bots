@@ -32,9 +32,8 @@ const UPDATE_SOURCE = DEFAULT_UPDATE_SOURCES[0]
 let nativeBridge = null
 
 try {
-  nativeBridge = typeof process._linkedBinding === 'function'
-    ? process._linkedBinding('cordova_bridge')
-    : null
+  nativeBridge =
+    typeof process._linkedBinding === 'function' ? process._linkedBinding('cordova_bridge') : null
 } catch (error) {}
 
 const DEFAULT_DESKTOP_SETTINGS = {
@@ -272,7 +271,11 @@ function setAndroidRuntimeKeepAlive(nextEnabled) {
     nativeBridge.sendMessage(SYSTEM_CHANNEL, `runtime-keepalive|${normalizedEnabled ? '1' : '0'}`)
     keepAliveEnabled = normalizedEnabled
   } catch (error) {
-    persistRuntimeLog(`Background keep-alive error: ${error.message || String(error)}`, 'warning', 'ANDROID')
+    persistRuntimeLog(
+      `Background keep-alive error: ${error.message || String(error)}`,
+      'warning',
+      'ANDROID'
+    )
   }
 }
 
@@ -301,27 +304,35 @@ function sendAndroidSystemMessage(message) {
     nativeBridge.sendMessage(SYSTEM_CHANNEL, message)
     return true
   } catch (error) {
-    persistRuntimeLog(`Android native message error: ${error.message || String(error)}`, 'warning', 'ANDROID')
+    persistRuntimeLog(
+      `Android native message error: ${error.message || String(error)}`,
+      'warning',
+      'ANDROID'
+    )
     return false
   }
 }
 
 function notifyAndroidUpdateProgress({ percent, receivedBytes, totalBytes, fileName }) {
-  sendAndroidSystemMessage([
-    'update-download-progress',
-    Math.max(0, Math.min(100, Number(percent) || 0)),
-    Math.max(0, Number(receivedBytes) || 0),
-    Math.max(0, Number(totalBytes) || 0),
-    encodeURIComponent(fileName || latestUpdateInfo?.asset?.name || 'update.apk')
-  ].join('|'))
+  sendAndroidSystemMessage(
+    [
+      'update-download-progress',
+      Math.max(0, Math.min(100, Number(percent) || 0)),
+      Math.max(0, Number(receivedBytes) || 0),
+      Math.max(0, Number(totalBytes) || 0),
+      encodeURIComponent(fileName || latestUpdateInfo?.asset?.name || 'update.apk')
+    ].join('|')
+  )
 }
 
 function notifyAndroidUpdateReady(downloaded) {
-  sendAndroidSystemMessage([
-    'update-ready',
-    encodeURIComponent(downloaded.filePath || ''),
-    encodeURIComponent(downloaded.fileName || '')
-  ].join('|'))
+  sendAndroidSystemMessage(
+    [
+      'update-ready',
+      encodeURIComponent(downloaded.filePath || ''),
+      encodeURIComponent(downloaded.fileName || '')
+    ].join('|')
+  )
 }
 
 function notifyAndroidUpdateInstalling(apkPath) {
@@ -342,9 +353,10 @@ function sendAndroidInstallRequest(apkPath, source = 'install-button') {
   updateState = {
     ...buildUpdatePayload(),
     status: 'installing',
-    installResumeState: source === 'android-resume'
-      ? `resume-retry-${installResumeRetryCount + 1}`
-      : 'install-requested',
+    installResumeState:
+      source === 'android-resume'
+        ? `resume-retry-${installResumeRetryCount + 1}`
+        : 'install-requested',
     error: ''
   }
   publishUpdateState()
@@ -428,9 +440,12 @@ function publishRuntimeState(force = false) {
 
   if (publishTimer) return
 
-  publishTimer = setTimeout(() => {
-    flushRuntimeStatePublish()
-  }, Math.max(0, intervalMs - elapsedMs))
+  publishTimer = setTimeout(
+    () => {
+      flushRuntimeStatePublish()
+    },
+    Math.max(0, intervalMs - elapsedMs)
+  )
 }
 
 function buildUpdatePayload() {
@@ -600,9 +615,10 @@ async function downloadMobileUpdate() {
       outputDir: UPDATES_DIR,
       onProgress(progress) {
         const totalBytes = progress.totalBytes || latestUpdateInfo.asset.size || 0
-        const percent = totalBytes > 0
-          ? Math.min(100, Math.round((progress.receivedBytes / totalBytes) * 100))
-          : 0
+        const percent =
+          totalBytes > 0
+            ? Math.min(100, Math.round((progress.receivedBytes / totalBytes) * 100))
+            : 0
         updateState = {
           ...buildUpdatePayload(),
           status: 'downloading',
@@ -756,7 +772,11 @@ function restartRuntimeFromWatchdog(reason = 'runtime-watchdog') {
   } catch (error) {
     runtimeActive = false
     runtimeState.status = 'error'
-    persistRuntimeLog(`Runtime watchdog failed: ${error.message || String(error)}`, 'error', 'ANDROID')
+    persistRuntimeLog(
+      `Runtime watchdog failed: ${error.message || String(error)}`,
+      'error',
+      'ANDROID'
+    )
     syncRuntimeKeepAlive()
     publishRuntimeState(true)
   }

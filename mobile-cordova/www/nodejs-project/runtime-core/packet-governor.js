@@ -19,16 +19,15 @@ function createPacketGovernor(options = {}) {
 }
 
 function normalizeGovernor(governor, options = {}) {
-  const target = governor && typeof governor === 'object'
-    ? governor
-    : createPacketGovernor(options)
+  const target = governor && typeof governor === 'object' ? governor : createPacketGovernor(options)
 
   if (typeof target.enabled !== 'boolean') target.enabled = options.enabled !== false
   if (!Number.isFinite(Number(target.safeUntil))) target.safeUntil = 0
   if (!Number.isFinite(Number(target.lastIncidentAt))) target.lastIncidentAt = 0
   if (!Number.isFinite(Number(target.lastRecoveryAt))) target.lastRecoveryAt = 0
   if (!Number.isFinite(Number(target.incidentCount))) target.incidentCount = 0
-  if (!Number.isFinite(Number(target.recoveryMs))) target.recoveryMs = Math.max(1000, Number(options.recoveryMs) || DEFAULT_RECOVERY_MS)
+  if (!Number.isFinite(Number(target.recoveryMs)))
+    target.recoveryMs = Math.max(1000, Number(options.recoveryMs) || DEFAULT_RECOVERY_MS)
   if (typeof target.lastReason !== 'string') target.lastReason = String(target.lastReason || '')
 
   return target
@@ -37,7 +36,10 @@ function normalizeGovernor(governor, options = {}) {
 function normalizeBaseLimits(baseLimits = {}) {
   const fastPerSecond = Math.max(1, Number(baseLimits.fastPerSecond ?? baseLimits.perSecond) || 1)
   const fastBurst = Math.max(1, Number(baseLimits.fastBurst ?? baseLimits.burst) || 1)
-  const safePerSecond = Math.max(1, Number(baseLimits.safePerSecond ?? fastPerSecond) || fastPerSecond)
+  const safePerSecond = Math.max(
+    1,
+    Number(baseLimits.safePerSecond ?? fastPerSecond) || fastPerSecond
+  )
   const safeBurst = Math.max(1, Number(baseLimits.safeBurst ?? fastBurst) || fastBurst)
 
   return {
@@ -53,7 +55,7 @@ function normalizeBaseLimits(baseLimits = {}) {
 }
 
 function interpolateInteger(from, to, progress) {
-  return Math.max(1, Math.round(from + ((to - from) * clamp(progress, 0, 1))))
+  return Math.max(1, Math.round(from + (to - from) * clamp(progress, 0, 1)))
 }
 
 function getPacketGovernorSnapshot(governor, now = Date.now()) {
@@ -61,7 +63,8 @@ function getPacketGovernorSnapshot(governor, now = Date.now()) {
   const timestamp = Number(now) || Date.now()
   const safeRemainingMs = Math.max(0, target.safeUntil - timestamp)
   const recoveryElapsedMs = Math.max(0, timestamp - target.safeUntil)
-  const recovering = target.enabled &&
+  const recovering =
+    target.enabled &&
     safeRemainingMs <= 0 &&
     target.lastIncidentAt > 0 &&
     recoveryElapsedMs < target.recoveryMs
@@ -116,7 +119,11 @@ function getPacketGovernorLimits(governor, baseLimits = {}, now = Date.now()) {
 
   return {
     ...snapshot,
-    perSecond: interpolateInteger(limits.safePerSecond, limits.fastPerSecond, snapshot.recoveryProgress),
+    perSecond: interpolateInteger(
+      limits.safePerSecond,
+      limits.fastPerSecond,
+      snapshot.recoveryProgress
+    ),
     burst: interpolateInteger(limits.safeBurst, limits.fastBurst, snapshot.recoveryProgress),
     burstWindowMs: limits.burstWindowMs,
     targetCooldownMs: limits.targetCooldownMs,

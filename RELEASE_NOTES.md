@@ -1,22 +1,19 @@
-# ProstoCraft Bot Studio 3.0.0
+# ProstoCraft Bot Studio 3.0.1
 
-Версия `3.0.0` закрепляет стабильную быструю добычу на реальном сервере и снижает риск киков за packet-break без урезания быстрых настроек.
+Версия `3.0.1` закрепляет большой внутренний рефакторинг без изменения формата `config.json`, UI и пользовательского поведения.
 
 ## Что нового
 
-- Safe packet-профиль стал действительно безопаснее и теперь тоже масштабируется adaptive mining controller.
-- Speed guard получил гистерезис: он не дёргает восстановление из-за мелких колебаний рядом с целью, но быстро реагирует на реальные просадки.
-- При низких подтверждениях packet-break бот профилактически включает packet-safe режим до кика `too many packets`.
-- Offline watchdog больше не перебивает активный reconnect поверх свежей попытки подключения.
-- Проверено на реальном сервере с рабочим конфигом: 15 минут без `too many packets`, без reconnect, скорость держалась около `732-748 б/м`.
-- Runtime snapshot теперь отдаёт `performance`: effective/raw скорость, peak, packet mode и последнюю причину просадки.
-- BotFilter/chat-captcha события получили evidence с source/position/timestamp, чтобы не ловить ложную чат-капчу.
-- Центр обновлений получил online/fallback/cache режимы и понятный источник данных.
-- UI показывает компактный диагноз на пульте и фильтр логов `Важное / Всё`.
-- Android release build больше не создаёт fallback/CI-signed APK вместо стабильной подписи.
+- Добавлены ESLint, Prettier, CI-проверки и JSDoc/checkJs typecheck для релизных модулей.
+- Конфигурация вынесена в единую runtime-схему с сохранением legacy fallback/clamp поведения.
+- `bot.js` сокращён до оркестратора, а runtime-логика разнесена по модулям `runtime-core/`.
+- Renderer разбит на модули по экранам и действиям без изменения UI и JSON-формата настроек.
+- Electron main-процесс разнесён по модулям, IPC-проверки усилены без смены публичного API.
+- Android/Cordova release tooling разделён на проверяемые модули и покрыт тестами.
+- Синхронизация Android assets и Cordova runtime обновлена под новые runtime-core модули.
 
 ## Что скачать
 
-- `ProstoCraft.Bot.Studio-Setup-3.0.0.exe` - обычный установщик Windows.
-- `ProstoCraft.Bot.Studio-Mobile-3.0.0.apk` - Android APK.
+- `ProstoCraft.Bot.Studio-Setup-3.0.1.exe` - обычный установщик Windows.
+- `ProstoCraft.Bot.Studio-Mobile-3.0.1.apk` - Android APK.
 - `SHA256SUMS.txt` - контрольные суммы файлов.

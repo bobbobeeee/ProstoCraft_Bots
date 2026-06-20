@@ -47,15 +47,27 @@ const migrated = applyLegacyConfigMigrations(config, defaults)
 assert.strictEqual(migrated.timing.breakPacketSafeMaxPerSecond, 160)
 assert.strictEqual(migrated.timing.breakPacketSafeBurstLimit, 42)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'minBlocksPerMin'), false)
-assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinBlocksPerMin'), false)
-assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinLearnRate'), false)
-assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.antibot, 'limboScannerActiveFallDelayMs'), false)
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinBlocksPerMin'),
+  false
+)
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(migrated.timing, 'speedGuardMinLearnRate'),
+  false
+)
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(migrated.antibot, 'limboScannerActiveFallDelayMs'),
+  false
+)
 assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.antibot, 'limboFallbackY'), false)
 assert.strictEqual(migrated.timing.speedGuardTargetRatio, 0.9)
 assert.strictEqual(migrated.timing.speedGuardRateWindowMs, 30000)
 assert.strictEqual(migrated.timing.speedGuardReconnectAfterRecoveries, 3)
 assert.strictEqual(migrated.timing.miningControllerMinBudgetScale, 0.85)
-assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.timing, 'emptyTargetButtonCooldownMs'), false)
+assert.strictEqual(
+  Object.prototype.hasOwnProperty.call(migrated.timing, 'emptyTargetButtonCooldownMs'),
+  false
+)
 assert.strictEqual(migrated.logging.detailedEvents, true)
 assert.strictEqual(migrated.logging.logServerMessages, true)
 assert.strictEqual(migrated.features.enableSpeedGuard, true)

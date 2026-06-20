@@ -10,14 +10,16 @@ const DEFAULT_UPDATE_SOURCES = [
     repo: 'ProstoCraft_Bots',
     apiUrl: 'https://api.github.com/repos/bobbobeeee/ProstoCraft_Bots/releases/latest',
     releaseUrl: 'https://github.com/bobbobeeee/ProstoCraft_Bots/releases/latest',
-    manifestUrl: 'https://raw.githubusercontent.com/bobbobeeee/ProstoCraft_Bots/main/latest-release.json'
+    manifestUrl:
+      'https://raw.githubusercontent.com/bobbobeeee/ProstoCraft_Bots/main/latest-release.json'
   },
   {
     owner: 'merrobocop',
     repo: 'ProstoCraft_Bots',
     apiUrl: 'https://api.github.com/repos/merrobocop/ProstoCraft_Bots/releases/latest',
     releaseUrl: 'https://github.com/merrobocop/ProstoCraft_Bots/releases/latest',
-    manifestUrl: 'https://raw.githubusercontent.com/merrobocop/ProstoCraft_Bots/main/latest-release.json'
+    manifestUrl:
+      'https://raw.githubusercontent.com/merrobocop/ProstoCraft_Bots/main/latest-release.json'
   }
 ]
 
@@ -86,7 +88,9 @@ function selectUpdateAsset(release, platform) {
 }
 
 function selectChecksumAsset(release) {
-  const match = getAssets(release).find(asset => /^SHA256SUMS\.txt$/i.test(String(asset?.name || '')))
+  const match = getAssets(release).find(asset =>
+    /^SHA256SUMS\.txt$/i.test(String(asset?.name || ''))
+  )
   if (!match) return null
 
   return {
@@ -123,9 +127,8 @@ function buildUpdateInfoFromRelease(release, options = {}) {
   const latestVersion = getReleaseVersion(release)
   const asset = selectUpdateAsset(release, platform)
   const checksumAsset = selectChecksumAsset(release)
-  const checksumHash = asset && options.checksumText
-    ? findChecksumForAsset(options.checksumText, asset.name)
-    : null
+  const checksumHash =
+    asset && options.checksumText ? findChecksumForAsset(options.checksumText, asset.name) : null
   const updateAvailable = isNewerVersion(latestVersion, currentVersion)
 
   return {
@@ -176,8 +179,7 @@ function requestBuffer(url, options = {}) {
         }
 
         const nextUrl = new URL(redirectUrl, url).toString()
-        requestBuffer(nextUrl, { ...options, maxRedirects: maxRedirects - 1 })
-          .then(resolve, reject)
+        requestBuffer(nextUrl, { ...options, maxRedirects: maxRedirects - 1 }).then(resolve, reject)
         return
       }
 
@@ -246,12 +248,20 @@ function writeUpdateCache(cachePath, payload) {
   if (!cachePath || !payload?.release) return
 
   fs.mkdirSync(path.dirname(cachePath), { recursive: true })
-  fs.writeFileSync(cachePath, `${JSON.stringify({
-    savedAt: new Date().toISOString(),
-    release: payload.release,
-    checksumText: payload.checksumText || '',
-    source: payload.source || null
-  }, null, 2)}\n`, 'utf8')
+  fs.writeFileSync(
+    cachePath,
+    `${JSON.stringify(
+      {
+        savedAt: new Date().toISOString(),
+        release: payload.release,
+        checksumText: payload.checksumText || '',
+        source: payload.source || null
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
 }
 
 function readUpdateCache(cachePath) {
@@ -260,9 +270,10 @@ function readUpdateCache(cachePath) {
 }
 
 async function checkForUpdates(options = {}) {
-  const sources = Array.isArray(options.sources) && options.sources.length
-    ? options.sources
-    : DEFAULT_UPDATE_SOURCES
+  const sources =
+    Array.isArray(options.sources) && options.sources.length
+      ? options.sources
+      : DEFAULT_UPDATE_SOURCES
   const errors = []
 
   for (const source of sources) {
@@ -350,7 +361,9 @@ function hashFile(filePath, algorithm = 'sha256') {
 }
 
 async function verifyFileSha256(filePath, expectedHash) {
-  const expected = String(expectedHash || '').trim().toLowerCase()
+  const expected = String(expectedHash || '')
+    .trim()
+    .toLowerCase()
   if (!/^[a-f0-9]{64}$/.test(expected)) {
     throw new Error('SHA256 checksum is missing for this update asset.')
   }
@@ -386,8 +399,10 @@ function downloadToFile(url, filePath, options = {}) {
         }
 
         const nextUrl = new URL(redirectUrl, url).toString()
-        downloadToFile(nextUrl, filePath, { ...options, maxRedirects: maxRedirects - 1 })
-          .then(resolve, reject)
+        downloadToFile(nextUrl, filePath, { ...options, maxRedirects: maxRedirects - 1 }).then(
+          resolve,
+          reject
+        )
         return
       }
 
@@ -398,7 +413,8 @@ function downloadToFile(url, filePath, options = {}) {
       }
 
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
-      const totalBytes = Number(response.headers['content-length']) || Number(options.totalBytes) || 0
+      const totalBytes =
+        Number(response.headers['content-length']) || Number(options.totalBytes) || 0
       let receivedBytes = 0
       const output = fs.createWriteStream(filePath)
 

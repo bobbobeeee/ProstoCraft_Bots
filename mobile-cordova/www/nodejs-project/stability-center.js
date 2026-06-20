@@ -65,7 +65,7 @@ const HEALTH_DEFINITIONS = {
     severity: 'warning',
     diagnosis: 'Packet-only копание ушло в аварийный dig fallback.'
   },
-  'joining': {
+  joining: {
     state: 'recovering',
     severity: 'ok',
     diagnosis: 'LimboFilter пройден, бот входит на подсервер.'
@@ -109,16 +109,41 @@ function classifyHealthEvent(event = {}) {
   const text = `${message} ${code}`.toLowerCase()
 
   if (text.includes('введите капчу') || text.includes('chat-captcha')) return 'chat-captcha-hold'
-  if (text.includes('limbofilter') || text.includes('botfilter') || text.includes('fall-провер')) return 'botfilter-hold'
-  if (text.includes('mining-confirmation') || text.includes('confirmation')) return 'mining-confirmation'
+  if (text.includes('limbofilter') || text.includes('botfilter') || text.includes('fall-провер'))
+    return 'botfilter-hold'
+  if (text.includes('mining-confirmation') || text.includes('confirmation'))
+    return 'mining-confirmation'
   if (text.includes('packet-budget') || text.includes('packet budget')) return 'packet-budget'
   if (text.includes('fallback-dig') || text.includes('fallback dig')) return 'fallback-dig'
-  if (text.includes('speed-guard') || text.includes('speed guard') || text.includes('просадка')) return 'speed-drop'
-  if (text.includes('runtime-stale') || text.includes('runtime-silent') || text.includes('runtime watchdog')) return 'runtime-stale'
-  if (text.includes('сбросил мир') || text.includes('server closed') || text.includes('world reset')) return 'server-world-reset'
+  if (text.includes('speed-guard') || text.includes('speed guard') || text.includes('просадка'))
+    return 'speed-drop'
+  if (
+    text.includes('runtime-stale') ||
+    text.includes('runtime-silent') ||
+    text.includes('runtime watchdog')
+  )
+    return 'runtime-stale'
+  if (
+    text.includes('сбросил мир') ||
+    text.includes('server closed') ||
+    text.includes('world reset')
+  )
+    return 'server-world-reset'
   if (text.includes('enotfound') || text.includes('eai_again')) return 'dns-failure'
-  if (text.includes('etimedout') || text.includes('connect timeout') || text.includes('connect timed out') || text.includes('keepalive-timeout') || text.includes('keep-alive таймаут')) return 'connect-timeout'
-  if (text.includes('econnreset') || text.includes('econnaborted') || text.includes('socket hang up')) return 'network-reset'
+  if (
+    text.includes('etimedout') ||
+    text.includes('connect timeout') ||
+    text.includes('connect timed out') ||
+    text.includes('keepalive-timeout') ||
+    text.includes('keep-alive таймаут')
+  )
+    return 'connect-timeout'
+  if (
+    text.includes('econnreset') ||
+    text.includes('econnaborted') ||
+    text.includes('socket hang up')
+  )
+    return 'network-reset'
 
   return event.reason && HEALTH_REASONS.has(event.reason) ? event.reason : 'mining-ok'
 }
@@ -136,7 +161,9 @@ function updateHealthState(current, event = {}, now = Date.now()) {
     event.reconnectReason ||
     event.lastRecoveryAction
   )
-  const reason = normalizeHealthReason(hasEventSignal ? (event.reason || classifyHealthEvent(event)) : previous.reason)
+  const reason = normalizeHealthReason(
+    hasEventSignal ? event.reason || classifyHealthEvent(event) : previous.reason
+  )
   const definition = HEALTH_DEFINITIONS[reason] || HEALTH_DEFINITIONS['mining-ok']
   const sameReason = previous.reason === reason
   const sinceMs = sameReason ? Number(previous.sinceMs || now) : now
@@ -150,12 +177,13 @@ function updateHealthState(current, event = {}, now = Date.now()) {
     sinceMs,
     downtimeMs: reason === 'mining-ok' ? 0 : Math.max(0, now - sinceMs),
     diagnosis: event.diagnosis || definition.diagnosis,
-    lastNetworkError: event.lastNetworkError || (
-      ['network-reset', 'dns-failure', 'connect-timeout'].includes(reason)
+    lastNetworkError:
+      event.lastNetworkError ||
+      (['network-reset', 'dns-failure', 'connect-timeout'].includes(reason)
         ? String(event.message || event.error?.message || event.error || reason)
-        : previous.lastNetworkError || ''
-    ),
-    lastReconnectReason: event.lastReconnectReason || event.reconnectReason || previous.lastReconnectReason || '',
+        : previous.lastNetworkError || ''),
+    lastReconnectReason:
+      event.lastReconnectReason || event.reconnectReason || previous.lastReconnectReason || '',
     lastRecoveryAction: event.lastRecoveryAction || previous.lastRecoveryAction || ''
   }
 }
@@ -184,16 +212,11 @@ function computeSmartRateStats(options = {}) {
     if (age < speedWindowMs) rawRecentBlocks += 1
   }
 
-  const effectiveWindowMs = active
-    ? Math.min(rawWindowMs, Math.max(1000, now - activeSince))
-    : 0
+  const effectiveWindowMs = active ? Math.min(rawWindowMs, Math.max(1000, now - activeSince)) : 0
   const effectiveCutoff = active ? Math.max(activeSince, now - effectiveWindowMs) : now
-  const effectiveBlocks = active
-    ? filteredTimes.filter(ts => ts >= effectiveCutoff).length
-    : 0
-  const effectiveRatePerMinute = active && effectiveWindowMs > 0
-    ? effectiveBlocks / (effectiveWindowMs / 60000)
-    : 0
+  const effectiveBlocks = active ? filteredTimes.filter(ts => ts >= effectiveCutoff).length : 0
+  const effectiveRatePerMinute =
+    active && effectiveWindowMs > 0 ? effectiveBlocks / (effectiveWindowMs / 60000) : 0
 
   return {
     blockTimes: filteredTimes,

@@ -82,7 +82,11 @@ const baseLimits = {
   const controller = createMiningController({ now: 1000, minSamples: 4, stalePendingWarn: 4 })
   controller.budgetScale = 1
   for (let index = 0; index < 6; index++) {
-    recordBreakPacketsSent(controller, { positionKey: `p${index}`, packetCount: 2, now: 1000 + index * 10 })
+    recordBreakPacketsSent(controller, {
+      positionKey: `p${index}`,
+      packetCount: 2,
+      now: 1000 + index * 10
+    })
   }
   pruneMiningControllerPending(controller, { now: 4000, stalePendingMs: 1500 })
   const result = evaluateMiningController(controller, { now: 5000, force: true })
@@ -114,15 +118,31 @@ const baseLimits = {
 }
 
 {
-  const controller = createMiningController({ now: 1000, softRecoveryLimit: 2, softRecoveryCooldownMs: 0 })
+  const controller = createMiningController({
+    now: 1000,
+    softRecoveryLimit: 2,
+    softRecoveryCooldownMs: 0
+  })
   recordBreakPacketsSent(controller, { positionKey: '35,82,2335', packetCount: 2, now: 1000 })
-  let decision = getPacketOnlyRecoveryDecision(controller, { now: 2300, idleMs: 1300, fallbackMs: 1200 })
+  let decision = getPacketOnlyRecoveryDecision(controller, {
+    now: 2300,
+    idleMs: 1300,
+    fallbackMs: 1200
+  })
   assert.strictEqual(decision.action, 'soft-recovery')
   recordPacketOnlySoftRecovery(controller, { now: 2300 })
-  decision = getPacketOnlyRecoveryDecision(controller, { now: 2500, idleMs: 1500, fallbackMs: 1200 })
+  decision = getPacketOnlyRecoveryDecision(controller, {
+    now: 2500,
+    idleMs: 1500,
+    fallbackMs: 1200
+  })
   assert.strictEqual(decision.action, 'soft-recovery')
   recordPacketOnlySoftRecovery(controller, { now: 2500 })
-  decision = getPacketOnlyRecoveryDecision(controller, { now: 2700, idleMs: 1700, fallbackMs: 1200 })
+  decision = getPacketOnlyRecoveryDecision(controller, {
+    now: 2700,
+    idleMs: 1700,
+    fallbackMs: 1200
+  })
   assert.strictEqual(decision.action, 'fallback-dig')
 }
 
@@ -148,9 +168,21 @@ const baseLimits = {
 
 {
   const timeline = createEventTimeline(3)
-  addTimelineEvent(timeline, { type: 'network', severity: 'warning', reason: 'ECONNRESET', message: 'read ECONNRESET' }, 1000)
-  addTimelineEvent(timeline, { type: 'network', severity: 'warning', reason: 'ECONNRESET', message: 'read ECONNRESET' }, 2000)
-  addTimelineEvent(timeline, { type: 'speed', severity: 'warning', reason: 'speed-drop', message: 'просадка' }, 40000)
+  addTimelineEvent(
+    timeline,
+    { type: 'network', severity: 'warning', reason: 'ECONNRESET', message: 'read ECONNRESET' },
+    1000
+  )
+  addTimelineEvent(
+    timeline,
+    { type: 'network', severity: 'warning', reason: 'ECONNRESET', message: 'read ECONNRESET' },
+    2000
+  )
+  addTimelineEvent(
+    timeline,
+    { type: 'speed', severity: 'warning', reason: 'speed-drop', message: 'просадка' },
+    40000
+  )
   const snapshot = getTimelineSnapshot(timeline, { limit: 5 })
   assert.strictEqual(snapshot.length, 2)
   assert.strictEqual(snapshot[1].repeatCount, 2)
@@ -159,21 +191,27 @@ const baseLimits = {
 {
   const chatCaptcha = 'Сканер | Пожалуйста, введите капчу в чат. Осталось попыток: 3.'
   assert.strictEqual(classifyCaptchaEvidence(chatCaptcha), 'chat-captcha')
-  const valid = validateCaptchaEvidence(createCaptchaEvidence({
-    text: chatCaptcha,
-    source: 'server-chat',
-    position: 'chat',
-    packetSeen: true
-  }), 'chat-captcha')
+  const valid = validateCaptchaEvidence(
+    createCaptchaEvidence({
+      text: chatCaptcha,
+      source: 'server-chat',
+      position: 'chat',
+      packetSeen: true
+    }),
+    'chat-captcha'
+  )
   assert.strictEqual(valid.valid, true)
 
-  const invisible = validateCaptchaEvidence(createCaptchaEvidence({
-    text: chatCaptcha,
-    source: 'server-game-info',
-    position: 'game_info',
-    packetSeen: true,
-    visibleChat: false
-  }), 'chat-captcha')
+  const invisible = validateCaptchaEvidence(
+    createCaptchaEvidence({
+      text: chatCaptcha,
+      source: 'server-game-info',
+      position: 'game_info',
+      packetSeen: true,
+      visibleChat: false
+    }),
+    'chat-captcha'
+  )
   assert.strictEqual(invisible.valid, false)
   assert.strictEqual(invisible.reason, 'not-visible-chat')
 }

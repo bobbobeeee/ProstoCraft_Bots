@@ -10,15 +10,14 @@ function createSpeedGuardProfile() {
 }
 
 function normalizeProfile(profile) {
-  const target = profile && typeof profile === 'object'
-    ? profile
-    : createSpeedGuardProfile()
+  const target = profile && typeof profile === 'object' ? profile : createSpeedGuardProfile()
 
   if (!Array.isArray(target.rateSamples)) target.rateSamples = []
   if (!Number.isFinite(Number(target.peakRatePerMinute))) target.peakRatePerMinute = 0
   if (!Number.isFinite(Number(target.stickyPeakRatePerMinute))) target.stickyPeakRatePerMinute = 0
   if (!Number.isFinite(Number(target.stickyPeakAt))) target.stickyPeakAt = 0
-  if (!Number.isFinite(Number(target.averageProgressIntervalMs))) target.averageProgressIntervalMs = 0
+  if (!Number.isFinite(Number(target.averageProgressIntervalMs)))
+    target.averageProgressIntervalMs = 0
   if (!Number.isFinite(Number(target.lastProgressAt))) target.lastProgressAt = 0
 
   return target
@@ -31,9 +30,10 @@ function recordSpeedGuardProgress(profile, now = Date.now()) {
 
   if (target.lastProgressAt > 0 && timestamp > target.lastProgressAt) {
     const interval = timestamp - target.lastProgressAt
-    target.averageProgressIntervalMs = target.averageProgressIntervalMs > 0
-      ? (target.averageProgressIntervalMs * 0.75) + (interval * 0.25)
-      : interval
+    target.averageProgressIntervalMs =
+      target.averageProgressIntervalMs > 0
+        ? target.averageProgressIntervalMs * 0.75 + interval * 0.25
+        : interval
   }
 
   target.lastProgressAt = timestamp
@@ -56,24 +56,34 @@ function getRobustPeakRate(samples) {
 function pruneRateSamples(profile, now, memoryMs) {
   const target = normalizeProfile(profile)
   const cutoff = Number(now) - Math.max(1000, Number(memoryMs) || 1000)
-  target.rateSamples = target.rateSamples.filter(sample => (
-    sample &&
-    Number.isFinite(Number(sample.ratePerMinute)) &&
-    Number.isFinite(Number(sample.at)) &&
-    Number(sample.at) >= cutoff
-  ))
-  target.peakRatePerMinute = Math.max(target.peakRatePerMinute || 0, getRobustPeakRate(target.rateSamples))
+  target.rateSamples = target.rateSamples.filter(
+    sample =>
+      sample &&
+      Number.isFinite(Number(sample.ratePerMinute)) &&
+      Number.isFinite(Number(sample.at)) &&
+      Number(sample.at) >= cutoff
+  )
+  target.peakRatePerMinute = Math.max(
+    target.peakRatePerMinute || 0,
+    getRobustPeakRate(target.rateSamples)
+  )
   return target
 }
 
-function rememberSpeedGuardPeak(profile, ratePerMinute, now = Date.now(), memoryMs = 120000, options = {}) {
+function rememberSpeedGuardPeak(
+  profile,
+  ratePerMinute,
+  now = Date.now(),
+  memoryMs = 120000,
+  options = {}
+) {
   const target = normalizeProfile(profile)
   const rate = Number(ratePerMinute)
   const timestamp = Number(now)
   const sampleMemoryMs = Math.max(1000, Number(memoryMs) || 1000)
   const stickyPeakMemoryMs = Math.max(
     sampleMemoryMs,
-    Number(options.stickyPeakMemoryMs ?? options.stickyMemoryMs ?? (30 * 60 * 1000)) || (30 * 60 * 1000)
+    Number(options.stickyPeakMemoryMs ?? options.stickyMemoryMs ?? 30 * 60 * 1000) || 30 * 60 * 1000
   )
 
   if (Number.isFinite(timestamp)) {
@@ -81,7 +91,10 @@ function rememberSpeedGuardPeak(profile, ratePerMinute, now = Date.now(), memory
   }
 
   if (Number.isFinite(rate) && rate > 0) {
-    target.rateSamples.push({ at: Number.isFinite(timestamp) ? timestamp : Date.now(), ratePerMinute: rate })
+    target.rateSamples.push({
+      at: Number.isFinite(timestamp) ? timestamp : Date.now(),
+      ratePerMinute: rate
+    })
     pruneRateSamples(target, Number.isFinite(timestamp) ? timestamp : Date.now(), sampleMemoryMs)
   }
 
@@ -110,16 +123,14 @@ function getSpeedGuardTargetRate(profile, targetRatio) {
   const target = normalizeProfile(profile)
   const ratio = Math.min(0.99, Math.max(0.1, Number(targetRatio) || 0.9))
 
-  return target.peakRatePerMinute > 0
-    ? target.peakRatePerMinute * ratio
-    : 0
+  return target.peakRatePerMinute > 0 ? target.peakRatePerMinute * ratio : 0
 }
 
 function getSpeedGuardTargetRatioFromDropPercent(dropPercent, fallbackRatio = 0.9) {
   const percent = Number(dropPercent)
   if (Number.isFinite(percent)) {
     const clampedPercent = Math.min(50, Math.max(1, percent))
-    return 1 - (clampedPercent / 100)
+    return 1 - clampedPercent / 100
   }
 
   const ratio = Number(fallbackRatio)
@@ -148,7 +159,12 @@ function getAdaptiveWaitMs(profile, baseWaitMs, intervalMultiplier = 3) {
 function shouldEscalateSpeedDrop(options = {}) {
   const currentRate = Number(options.currentRate)
   const targetRate = Number(options.targetRate)
-  if (!Number.isFinite(currentRate) || !Number.isFinite(targetRate) || targetRate <= 0 || currentRate >= targetRate) {
+  if (
+    !Number.isFinite(currentRate) ||
+    !Number.isFinite(targetRate) ||
+    targetRate <= 0 ||
+    currentRate >= targetRate
+  ) {
     return false
   }
 
@@ -158,7 +174,10 @@ function shouldEscalateSpeedDrop(options = {}) {
   const sustainedDropReconnectMs = Math.max(0, Number(options.sustainedDropReconnectMs) || 0)
   const idleFor = Number(options.idleFor)
   const noProgressReconnectMs = Math.max(0, Number(options.noProgressReconnectMs) || 0)
-  const severeDropRatio = Math.min(0.99, Math.max(0.1, Number(options.severeDropRatio ?? 0.85) || 0.85))
+  const severeDropRatio = Math.min(
+    0.99,
+    Math.max(0.1, Number(options.severeDropRatio ?? 0.85) || 0.85)
+  )
 
   if (Number.isFinite(idleFor) && noProgressReconnectMs > 0 && idleFor >= noProgressReconnectMs) {
     return true

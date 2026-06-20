@@ -39,8 +39,15 @@ function getFinishPacketTicks(fallingCheckTicks = LIMBO_FILTER_DEFAULTS.fallingC
 }
 
 function getMinimumCheckMs(options = {}) {
-  const ticks = Math.max(1, Number(options.fallingCheckTicks ?? LIMBO_FILTER_DEFAULTS.fallingCheckTicks) || LIMBO_FILTER_DEFAULTS.fallingCheckTicks)
-  const packetMs = Math.max(1, Number(options.packetMs ?? LIMBO_FILTER_DEFAULTS.packetMs) || LIMBO_FILTER_DEFAULTS.packetMs)
+  const ticks = Math.max(
+    1,
+    Number(options.fallingCheckTicks ?? LIMBO_FILTER_DEFAULTS.fallingCheckTicks) ||
+      LIMBO_FILTER_DEFAULTS.fallingCheckTicks
+  )
+  const packetMs = Math.max(
+    1,
+    Number(options.packetMs ?? LIMBO_FILTER_DEFAULTS.packetMs) || LIMBO_FILTER_DEFAULTS.packetMs
+  )
   return ticks * packetMs
 }
 
@@ -49,7 +56,12 @@ function createFallPacket(start, tick) {
   const y = toFiniteNumber(start?.y)
   const z = toFiniteNumber(start?.z)
   const numericTick = Number(tick)
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(numericTick)) {
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(z) ||
+    !Number.isFinite(numericTick)
+  ) {
     return null
   }
 
@@ -81,7 +93,12 @@ function createFallSequence(start, options = {}) {
 }
 
 function validateFallPacket(packet, state, options = {}) {
-  const tolerance = Math.max(0, Number(options.maxValidPositionDifference ?? LIMBO_FILTER_DEFAULTS.maxValidPositionDifference) || LIMBO_FILTER_DEFAULTS.maxValidPositionDifference)
+  const tolerance = Math.max(
+    0,
+    Number(
+      options.maxValidPositionDifference ?? LIMBO_FILTER_DEFAULTS.maxValidPositionDifference
+    ) || LIMBO_FILTER_DEFAULTS.maxValidPositionDifference
+  )
   const x = toFiniteNumber(packet?.x)
   const y = toFiniteNumber(packet?.y)
   const z = toFiniteNumber(packet?.z)
@@ -93,7 +110,12 @@ function validateFallPacket(packet, state, options = {}) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
     return { ok: false, reason: 'non-finite-position' }
   }
-  if (!Number.isFinite(expectedX) || !Number.isFinite(expectedZ) || !Number.isFinite(lastY) || !Number.isFinite(tick)) {
+  if (
+    !Number.isFinite(expectedX) ||
+    !Number.isFinite(expectedZ) ||
+    !Number.isFinite(lastY) ||
+    !Number.isFinite(tick)
+  ) {
     return { ok: false, reason: 'invalid-state' }
   }
   if (x !== expectedX || z !== expectedZ) {

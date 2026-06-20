@@ -53,14 +53,23 @@ const checksumText = [
 }
 
 {
-  assert.strictEqual(selectUpdateAsset(release, 'desktop').name, 'ProstoCraft.Bot.Studio-Setup-2.0.1.exe')
-  assert.strictEqual(selectUpdateAsset(release, 'android').name, 'ProstoCraft.Bot.Studio-Mobile-2.0.1.apk')
+  assert.strictEqual(
+    selectUpdateAsset(release, 'desktop').name,
+    'ProstoCraft.Bot.Studio-Setup-2.0.1.exe'
+  )
+  assert.strictEqual(
+    selectUpdateAsset(release, 'android').name,
+    'ProstoCraft.Bot.Studio-Mobile-2.0.1.apk'
+  )
 }
 
 {
   const hashes = parseSha256Sums(checksumText)
   assert.strictEqual(hashes.get('prostocraft.bot.studio-setup-2.0.1.exe'), 'a'.repeat(64))
-  assert.strictEqual(findChecksumForAsset(checksumText, 'ProstoCraft.Bot.Studio-Mobile-2.0.1.apk'), 'b'.repeat(64))
+  assert.strictEqual(
+    findChecksumForAsset(checksumText, 'ProstoCraft.Bot.Studio-Mobile-2.0.1.apk'),
+    'b'.repeat(64)
+  )
 }
 
 {
@@ -110,10 +119,7 @@ const checksumText = [
   assert.strictEqual(cachedInfo.updateAvailable, true)
   assert.strictEqual(cachedInfo.asset.name, 'ProstoCraft.Bot.Studio-Setup-2.0.1.exe')
 
-  await assert.rejects(
-    () => verifyFileSha256(tempFile, 'c'.repeat(64)),
-    /SHA256 mismatch/
-  )
+  await assert.rejects(() => verifyFileSha256(tempFile, 'c'.repeat(64)), /SHA256 mismatch/)
 
   fs.rmSync(tempDir, { recursive: true, force: true })
   console.log('update-service tests passed')

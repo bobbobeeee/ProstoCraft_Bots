@@ -27,7 +27,8 @@
           <span class="sidebar-label">Состояние рантайма</span>
           <div id="sidebar-status-pill" class="status-pill status-pill--idle">Остановлен</div>
           <p id="sidebar-status-copy" class="muted-copy">
-            Конфиг загружается из пользовательской копии, так что исходный проект остаётся в безопасности.
+            Конфиг загружается из пользовательской копии, так что исходный проект остаётся в
+            безопасности.
           </p>
         </div>
       </aside>
@@ -44,7 +45,9 @@
 
           <div class="topbar-actions no-drag">
             <button id="save-config-btn" class="button button--secondary">Сохранить конфиг</button>
-            <button id="open-runtime-dir-btn" class="button button--ghost">Открыть папку данных</button>
+            <button id="open-runtime-dir-btn" class="button button--ghost">
+              Открыть папку данных
+            </button>
             <button id="pause-btn" class="button button--ghost">Пауза</button>
             <button id="restart-btn" class="button button--secondary">Рестарт</button>
             <button id="start-stop-btn" class="button button--primary">Запустить</button>
@@ -102,7 +105,9 @@
                 <button id="save-settings-btn" class="button button--primary">Сохранить</button>
                 <button id="import-config-btn" class="button button--ghost">Импорт JSON</button>
                 <button id="export-config-btn" class="button button--ghost">Экспорт JSON</button>
-                <button id="reset-config-btn" class="button button--secondary">Сбросить к базе</button>
+                <button id="reset-config-btn" class="button button--secondary">
+                  Сбросить к базе
+                </button>
               </div>
             </div>
 
@@ -196,7 +201,11 @@
         </section>
       </main>
 
-      <section id="mobile-action-bar" class="mobile-action-bar no-drag" aria-label="Быстрые действия"></section>
+      <section
+        id="mobile-action-bar"
+        class="mobile-action-bar no-drag"
+        aria-label="Быстрые действия"
+      ></section>
 
       <nav class="mobile-nav no-drag" aria-label="Быстрая навигация">
         <button class="nav-item is-active" data-tab="dashboard">Пульт</button>
@@ -213,7 +222,9 @@
             <p class="eyebrow">Batch coordinate input</p>
             <h3>Вставка координат блоков</h3>
           </div>
-          <button id="close-coordinate-modal-btn" class="icon-button" aria-label="Закрыть">×</button>
+          <button id="close-coordinate-modal-btn" class="icon-button" aria-label="Закрыть">
+            ×
+          </button>
         </div>
 
         <div class="modal-meta">
@@ -221,14 +232,23 @@
         </div>
 
         <p class="muted-copy">
-          Поддерживаются <code>35 82 2335</code>, <code>35,82,2335</code>, <code>x:35 y:82 z:2335</code> и диапазоны <code>35 82-86 2335</code>.
+          Поддерживаются <code>35 82 2335</code>, <code>35,82,2335</code>,
+          <code>x:35 y:82 z:2335</code> и диапазоны <code>35 82-86 2335</code>.
         </p>
 
-        <textarea id="coordinate-textarea" class="coordinate-textarea" placeholder="35 82-86 2335&#10;36 82 2335&#10;37 82 2335"></textarea>
+        <textarea
+          id="coordinate-textarea"
+          class="coordinate-textarea"
+          placeholder="35 82-86 2335&#10;36 82 2335&#10;37 82 2335"
+        ></textarea>
 
         <div class="modal-actions">
-          <button id="replace-coordinates-btn" class="button button--primary">Заменить список</button>
-          <button id="append-coordinates-btn" class="button button--secondary">Добавить к текущему</button>
+          <button id="replace-coordinates-btn" class="button button--primary">
+            Заменить список
+          </button>
+          <button id="append-coordinates-btn" class="button button--secondary">
+            Добавить к текущему
+          </button>
         </div>
       </div>
     </div>
@@ -237,6 +257,23 @@
 
     <script src="cordova.js"></script>
     <script src="./bridge.js"></script>
+    <script src="./app-settings-timing.js"></script>
+    <script src="./app-settings-schema.js"></script>
+    <script src="./app-state-utils.js"></script>
+    <script src="./app-settings-values.js"></script>
+    <script src="./app-coordinate-utils.js"></script>
+    <script src="./app-validation.js"></script>
     <script src="./app.js"></script>
+    <script src="./app-view-utils.js"></script>
+    <script src="./app-mobile-view.js"></script>
+    <script src="./app-chrome-view.js"></script>
+    <script src="./app-dashboard-view.js"></script>
+    <script src="./app-bots-view.js"></script>
+    <script src="./app-settings-view.js"></script>
+    <script src="./app-updates-view.js"></script>
+    <script src="./app-logs-about-view.js"></script>
+    <script src="./app-actions.js"></script>
+    <script src="./app-update-actions.js"></script>
+    <script src="./app-listeners.js"></script>
   </body>
 </html>

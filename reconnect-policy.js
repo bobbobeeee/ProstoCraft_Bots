@@ -1,5 +1,8 @@
 function normalizeReconnectText(value) {
-  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function isTooManyPacketsText(text) {
@@ -7,12 +10,10 @@ function isTooManyPacketsText(text) {
 
   return Boolean(
     normalized &&
-    (
-      normalized.includes('too many packets') ||
+    (normalized.includes('too many packets') ||
       normalized.includes('sending too many') ||
       normalized.includes('слишком много пакетов') ||
-      normalized.includes('много пакетов')
-    )
+      normalized.includes('много пакетов'))
   )
 }
 
@@ -47,17 +48,18 @@ function botFilterDecision(scheduleReason, botFilterReason, botFilterLogReason, 
 }
 
 function isTimeoutText(text) {
-  return text.includes('время ожидания истекло') ||
+  return (
+    text.includes('время ожидания истекло') ||
     text.includes('превысили максимальное время проверки') ||
     text.includes('maximum bot-filter check time') ||
     text.includes('exceeded the maximum') ||
     text.includes('timed out') ||
     text.includes('timeout')
+  )
 }
 
 function isLoggingTooFastText(text) {
-  return text.includes('you are logging in too fast') ||
-    text.includes('logging too')
+  return text.includes('you are logging in too fast') || text.includes('logging too')
 }
 
 function isConnectionIssueCode(code) {
@@ -73,20 +75,19 @@ function getReconnectDecision(event = {}, options = {}) {
 
   if (type === 'too-many-packets-notice') {
     const source = event.source || 'server-message'
-    return scheduleDecision(
-      randomDelay(12000, 6000, random),
-      `too-many-packets-${source}`,
-      { packetSafetySource: source }
-    )
+    return scheduleDecision(randomDelay(12000, 6000, random), `too-many-packets-${source}`, {
+      packetSafetySource: source
+    })
   }
 
   if (type === 'kick') {
-    if (event.wasInBotFilterCheck && (
-      text.includes('falling check was failed') ||
-      text.includes('falling check failed') ||
-      text.includes('fall-провер') ||
-      text.includes('проверка пад')
-    )) {
+    if (
+      event.wasInBotFilterCheck &&
+      (text.includes('falling check was failed') ||
+        text.includes('falling check failed') ||
+        text.includes('fall-провер') ||
+        text.includes('проверка пад'))
+    ) {
       return botFilterDecision(
         'kick-limbo-falling-check-failed',
         'kick-limbo-falling-check-failed',
@@ -100,22 +101,16 @@ function getReconnectDecision(event = {}, options = {}) {
     }
 
     if (isTooManyPacketsText(text)) {
-      return scheduleDecision(
-        randomDelay(15000, 15000, random),
-        'kick-too-many-packets',
-        { packetSafetySource: 'kick-too-many-packets' }
-      )
+      return scheduleDecision(randomDelay(15000, 15000, random), 'kick-too-many-packets', {
+        packetSafetySource: 'kick-too-many-packets'
+      })
     }
 
     if (text.includes('internal error') || text.includes('connection')) {
-      return scheduleDecision(
-        randomDelay(30000, 30000, random),
-        'kick-internal-connection',
-        {
-          stabilityCooldownReason: 'кик/internal connection error',
-          stabilityCooldownMs: options.connectionStabilityCooldownMs
-        }
-      )
+      return scheduleDecision(randomDelay(30000, 30000, random), 'kick-internal-connection', {
+        stabilityCooldownReason: 'кик/internal connection error',
+        stabilityCooldownMs: options.connectionStabilityCooldownMs
+      })
     }
 
     if (text.includes('подождите') || text.includes('wait') || text.includes('перед повторным')) {
@@ -124,10 +119,12 @@ function getReconnectDecision(event = {}, options = {}) {
       const delay = baseDelay + Math.floor(random() * 60000)
       return scheduleDecision(delay, 'kick-wait-before-retry', {
         nextWaitKickCount,
-        logs: [{
-          level: 'warning',
-          message: `! Подождите (попытка ${nextWaitKickCount}) - ждём ${Math.round(delay / 60000)} мин`
-        }]
+        logs: [
+          {
+            level: 'warning',
+            message: `! Подождите (попытка ${nextWaitKickCount}) - ждём ${Math.round(delay / 60000)} мин`
+          }
+        ]
       })
     }
 
@@ -159,7 +156,9 @@ function getReconnectDecision(event = {}, options = {}) {
     if (text.includes('already connected')) {
       const delay = randomDelay(45000, 45000, random)
       return scheduleDecision(delay, 'kick-already-connected', {
-        logs: [{ level: 'warning', message: `Already connected - ждём ${Math.round(delay / 1000)}с` }]
+        logs: [
+          { level: 'warning', message: `Already connected - ждём ${Math.round(delay / 1000)}с` }
+        ]
       })
     }
 
@@ -168,7 +167,11 @@ function getReconnectDecision(event = {}, options = {}) {
 
   if (type === 'end') {
     if (event.wasInBotFilterCheck) {
-      return botFilterDecision('end-limbo-socket-closed', 'end-limbo-socket-closed', 'LimboFilter закрыл socket')
+      return botFilterDecision(
+        'end-limbo-socket-closed',
+        'end-limbo-socket-closed',
+        'LimboFilter закрыл socket'
+      )
     }
 
     return scheduleDecision(randomDelay(8000, 12000, random), 'bot-end', { forced: false })
@@ -178,7 +181,12 @@ function getReconnectDecision(event = {}, options = {}) {
     const code = String(err.code || '')
 
     if (event.hasReconnectPending) {
-      if (text.includes('econnreset') || text.includes('econnaborted') || code.includes('ECONNRESET') || code.includes('ECONNABORTED')) {
+      if (
+        text.includes('econnreset') ||
+        text.includes('econnaborted') ||
+        code.includes('ECONNRESET') ||
+        code.includes('ECONNABORTED')
+      ) {
         return {
           action: 'stability-only',
           stabilityCooldownReason: 'сетевой сброс во время reconnect',
@@ -197,13 +205,18 @@ function getReconnectDecision(event = {}, options = {}) {
       return { action: 'ignore' }
     }
 
-    if (event.wasInBotFilterCheck && (
-      text.includes('econnreset') ||
-      text.includes('econnaborted') ||
-      code.includes('ECONNRESET') ||
-      code.includes('ECONNABORTED')
-    )) {
-      return botFilterDecision('error-limbo-reset', 'error-limbo-reset', 'LimboFilter оборвал соединение')
+    if (
+      event.wasInBotFilterCheck &&
+      (text.includes('econnreset') ||
+        text.includes('econnaborted') ||
+        code.includes('ECONNRESET') ||
+        code.includes('ECONNABORTED'))
+    ) {
+      return botFilterDecision(
+        'error-limbo-reset',
+        'error-limbo-reset',
+        'LimboFilter оборвал соединение'
+      )
     }
 
     if (text.includes('connect etimedout') || err.syscall === 'connect') {
@@ -226,16 +239,22 @@ function getReconnectDecision(event = {}, options = {}) {
       return scheduleDecision(randomDelay(60000, 60000, random), 'error-logging-too-fast')
     }
 
-    const isNetworkError = ['ECONNRESET', 'ECONNABORTED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'EHOSTUNREACH']
-      .some(value => code.includes(value)) || text.includes('socket hang up')
+    const isNetworkError =
+      ['ECONNRESET', 'ECONNABORTED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'EHOSTUNREACH'].some(
+        value => code.includes(value)
+      ) || text.includes('socket hang up')
 
     if (isNetworkError) {
       const connectionIssue = isConnectionIssueCode(code)
-      return scheduleDecision(randomDelay(20000, 20000, random), `error-network-${code || 'socket'}`, {
-        noteNoInternet: connectionIssue,
-        stabilityCooldownReason: connectionIssue ? null : `сетевой сброс ${code || 'socket'}`,
-        stabilityCooldownMs: options.connectionStabilityCooldownMs
-      })
+      return scheduleDecision(
+        randomDelay(20000, 20000, random),
+        `error-network-${code || 'socket'}`,
+        {
+          noteNoInternet: connectionIssue,
+          stabilityCooldownReason: connectionIssue ? null : `сетевой сброс ${code || 'socket'}`,
+          stabilityCooldownMs: options.connectionStabilityCooldownMs
+        }
+      )
     }
 
     return scheduleDecision(randomDelay(15000, 15000, random), 'error-generic')
