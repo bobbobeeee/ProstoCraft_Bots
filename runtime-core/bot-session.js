@@ -2,35 +2,12 @@ const defaultMineflayer = require('mineflayer')
 const defaultVec3 = require('vec3')
 const { calculateBotFilterReconnectDelay, classifyBotFilterMessage } = require('../bot-filter')
 const { getReconnectDecision, isTooManyPacketsText } = require('../reconnect-policy')
-const { classifyHealthEvent, computeSmartRateStats } = require('../stability-center')
-const {
-  getAdaptiveRateWindowMs,
-  getAdaptiveWaitMs,
-  getSpeedGuardTargetRate,
-  recordSpeedGuardProgress,
-  rememberSpeedGuardPeak: rememberAdaptiveSpeedGuardPeak,
-  shouldEscalateSpeedDrop
-} = require('../speed-guard')
+const { classifyHealthEvent } = require('../stability-center')
 const { createFallPacket, getFinishPacketTicks, getMinimumCheckMs } = require('../limbo-filter')
 const {
-  getPacketGovernorLimits,
-  getPacketGovernorSnapshot,
-  recordPacketIncident
+  getPacketGovernorLimits
 } = require('./packet-governor')
 const { createPacketBreakTracker } = require('./packet-break-tracker')
-const {
-  evaluateMiningController,
-  getMiningControllerLimits,
-  getMiningControllerSnapshot,
-  getPacketOnlyRecoveryDecision,
-  pruneMiningControllerPending,
-  recordBreakPacketConfirmed,
-  recordBreakPacketsSent,
-  recordFallbackDig,
-  recordMiningPacketIncident,
-  recordPacketOnlySoftRecovery,
-  resetMiningControllerRecovery
-} = require('./mining-controller')
 const {
   createLifecycleState,
   getLifecycleSnapshot: getLifecycleStateSnapshot,
@@ -76,8 +53,6 @@ function createBotSessionFactory(options = {}) {
     BOT_FILTER_RETRY_MAX_MS,
     BREAK_PACKET_MIN_TARGET_COOLDOWN_MS,
     BREAK_PACKET_PENDING_RETRY_MS,
-    BREAK_PACKET_SAFE_MODE_MS,
-    BREAK_PACKET_SAFE_REPEATS,
     BREAK_PACKET_TARGET_COOLDOWN_MS,
     BURST_BREAK_INTERVAL_MS,
     BURST_BREAK_REACH,
@@ -133,14 +108,11 @@ function createBotSessionFactory(options = {}) {
     MENU_SUBSERVER_JOIN_WAIT_MS,
     MENU_WINDOW_TRANSITION_WAIT_MS,
     MINING_BATCH_SIZE,
-    MINING_CONTROLLER_BAD_CONFIRMATION_RATIO,
-    MINING_CONTROLLER_STALE_PENDING_MS,
     MINING_DIAGNOSTIC_INTERVAL_MS,
     MINING_LOOP_IDLE_MS,
     MOVING_PISTON_LOG_AFTER_IDLE_MS,
     MOVING_PISTON_WAIT_MS,
     PACKET_BREAK_CONFIRM_WINDOW_MS,
-    PACKET_GOVERNOR_RECOVERY_MS,
     PACKET_ONLY_FALLBACK_MS,
     PACKET_ONLY_MINING,
     PASSWORD,
@@ -163,25 +135,10 @@ function createBotSessionFactory(options = {}) {
     SCANNER_RECENT_POSITION_MS,
     SERVER_HOST,
     SERVER_PORT,
-    SPEED_GUARD_ALLOWED_DROP_PERCENT,
-    SPEED_GUARD_BUTTON_IDLE_MS,
-    SPEED_GUARD_ENABLED,
-    SPEED_GUARD_INTERVAL_MS,
-    SPEED_GUARD_LOW_RATE_MS,
-    SPEED_GUARD_NO_PROGRESS_RECONNECT_MS,
-    SPEED_GUARD_PEAK_MEMORY_MS,
-    SPEED_GUARD_RATE_WINDOW_MS,
-    SPEED_GUARD_RECONNECT_AFTER_RECOVERIES,
-    SPEED_GUARD_RECOVERY_COOLDOWN_MS,
-    SPEED_GUARD_RECOVERY_MIN_GAP_BPM,
-    SPEED_GUARD_RECOVERY_TOLERANCE_RATIO,
-    SPEED_GUARD_SEVERE_DROP_RATIO,
-    SPEED_GUARD_SOFT_RESTART_AFTER_RECOVERIES,
-    SPEED_GUARD_START_GRACE_MS,
-    SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
-    SPEED_GUARD_TARGET_RATIO,
     STABILITY_COOLDOWN_MAX_MS,
     STABILITY_COOLDOWN_MS,
+    TOOL_SWITCH_SLOTS,
+    TOOL_SWITCH_THRESHOLD,
     TRANSIENT_BREAK_REPEATS
   } = settings
 
@@ -192,7 +149,7 @@ function createBotSessionFactory(options = {}) {
   const clearTimeout = context.clearTimeout || global.clearTimeout
   const setInterval = context.setInterval || global.setInterval
   const clearInterval = context.clearInterval || global.clearInterval
-  const sleep = context.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)))
+  const sleep = context.sleep || (ms => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
   const getActiveBots = context.getActiveBots || (() => [])
   const isRuntimeEnabled = context.isRuntimeEnabled || (() => true)
   const isShuttingDown = context.isShuttingDown || (() => false)
@@ -207,20 +164,13 @@ function createBotSessionFactory(options = {}) {
   const noteGlobalError = context.noteGlobalError || noop
   const noteNoInternetError = context.noteNoInternetError || noop
   const summarizeDiagnosticDetails = context.summarizeDiagnosticDetails || (details => details)
-  const getPacketGovernor = context.getPacketGovernor
-  const getMiningController = context.getMiningController
   const getPacketGovernorBaseLimits = context.getPacketGovernorBaseLimits
-  const getSpeedGuardProfile = context.getSpeedGuardProfile
   const monitorData = context.monitorData || {}
   const stabilityCooldowns = context.stabilityCooldowns || new Map()
-  const packetSafetyCooldowns = context.packetSafetyCooldowns || new Map()
   const botFilterRetryStates = context.botFilterRetryStates || new Map()
 
   function createBot(cfg) {
     const username = cfg.username
-    const speedGuardProfile = getSpeedGuardProfile(username)
-    const packetGovernor = getPacketGovernor(username)
-    const miningController = getMiningController(username)
     const blocksToMine = cfg.blocksToMine
     const miningTargets = blocksToMine.map(({ x, y, z }) => vec3(x, y, z))
     const miningTargetKeys = new Set(
@@ -241,7 +191,6 @@ function createBotSessionFactory(options = {}) {
       reconnectGraceTimer = null
     let positionCheckTimer = null,
       positionCheckStartTimer = null
-    let speedGuardTimer = null
     let fallCheckTimer = null,
       limboFallStartTimer = null,
       limboFallIntervalTimer = null,
@@ -304,6 +253,8 @@ function createBotSessionFactory(options = {}) {
     let lastEmptyTargetsLogAt = 0
     let lastMiningLookAt = 0
     let lastReactiveBreakAt = 0
+    let lastToolSwitchCheckAt = 0
+    let toolSwitchCursor = 0
     let lastPositionDiagnosticAt = 0
     let lastMenuOpenAttemptAt = 0
     let lastLoginCommandAt = 0
@@ -340,13 +291,6 @@ function createBotSessionFactory(options = {}) {
       return getLifecycleStateSnapshot(lifecycle)
     }
     let packetOnlyStartedAt = 0
-    let lastMiningControllerLogAt = 0
-    let miningLoopSoftRestartRequested = false
-    let speedGuardStartedAt = 0
-    let speedGuardLowSince = 0
-    let speedGuardLastRecoveryAt = 0
-    let speedGuardRecoveries = 0
-    let speedGuardCheckRunning = false
     const packetBreakTracker = createPacketBreakTracker({
       getBreakPacketLimits,
       onThrottle: ({ requestedPackets, secondWindowCount, burstWindowCount, limits }) => {
@@ -354,12 +298,9 @@ function createBotSessionFactory(options = {}) {
           requestedPackets,
           secondWindowCount,
           burstWindowCount,
-          limits,
-          packetSafetyRemainingMs: getPacketSafetyRemaining()
+          limits
         })
-      },
-      pruneMiningControllerPending: options =>
-        pruneMiningControllerPending(miningController, options)
+      }
     })
 
     function getPositionKey(position) {
@@ -414,66 +355,21 @@ function createBotSessionFactory(options = {}) {
       return isFastMiningAllowed() && getStabilityCooldownRemaining() <= 0
     }
 
-    function getPacketSafetyRemaining() {
-      const now = Date.now()
-      const forcedRemaining = Math.max(0, (packetSafetyCooldowns.get(username) || 0) - now)
-      const governorRemaining = getPacketGovernorSnapshot(packetGovernor, now).safeRemainingMs
-      return Math.max(forcedRemaining, governorRemaining)
-    }
-
-    function isPacketSafetyModeActive() {
-      return getPacketSafetyRemaining() > 0
-    }
-
     function getBreakPacketLimits() {
-      const now = Date.now()
-      const forcedSafeMode = Math.max(0, (packetSafetyCooldowns.get(username) || 0) - now) > 0
-      const adaptiveBaseLimits = getMiningControllerLimits(
-        miningController,
-        getPacketGovernorBaseLimits()
-      )
-      const governorLimits = getPacketGovernorLimits(packetGovernor, adaptiveBaseLimits, now)
-      const safeMode = forcedSafeMode || governorLimits.mode === 'safe'
+      const baseLimits = getPacketGovernorBaseLimits()
+      const limits = getPacketGovernorLimits(baseLimits)
       return {
-        safeMode,
-        packetMode: forcedSafeMode ? 'safe' : governorLimits.mode,
-        perSecond: forcedSafeMode ? adaptiveBaseLimits.safePerSecond : governorLimits.perSecond,
-        burstWindowMs: governorLimits.burstWindowMs,
-        burst: forcedSafeMode ? adaptiveBaseLimits.safeBurst : governorLimits.burst,
-        targetCooldownMs: governorLimits.targetCooldownMs,
-        pendingRetryMs: governorLimits.pendingRetryMs,
-        repeatsLimit: forcedSafeMode ? BREAK_PACKET_SAFE_REPEATS : governorLimits.repeatsLimit,
-        safeRemainingMs: getPacketSafetyRemaining(),
-        lastReason: governorLimits.lastReason || ''
+        safeMode: false,
+        packetMode: 'fast',
+        perSecond: limits.perSecond,
+        burstWindowMs: limits.burstWindowMs,
+        burst: limits.burst,
+        targetCooldownMs: limits.targetCooldownMs,
+        pendingRetryMs: limits.pendingRetryMs,
+        repeatsLimit: Infinity,
+        safeRemainingMs: 0,
+        lastReason: ''
       }
-    }
-
-    function activatePacketSafetyMode(reason = 'too many packets') {
-      const now = Date.now()
-      const currentUntil = packetSafetyCooldowns.get(username) || 0
-      const until = Math.max(currentUntil, now + BREAK_PACKET_SAFE_MODE_MS)
-      packetSafetyCooldowns.set(username, until)
-      recordPacketIncident(packetGovernor, reason, {
-        now,
-        safeModeMs: BREAK_PACKET_SAFE_MODE_MS,
-        recoveryMs: PACKET_GOVERNOR_RECOVERY_MS
-      })
-      recordMiningPacketIncident(miningController, reason, { now })
-      packetBreakTracker.resetBudgetWindows()
-
-      addLog(
-        'warning',
-        username,
-        `Packet-safe режим ${Math.ceil((until - now) / 60000)}м: ${reason}`
-      )
-      recordTimelineEvent({
-        type: 'packet-budget',
-        severity: 'warning',
-        botName: username,
-        reason,
-        message: `Packet-safe: ${reason}`
-      })
-      diagEvent('packet-safe-mode-activated', { reason, until, limits: getBreakPacketLimits() })
     }
 
     function getEffectiveBreakPacketRepeats(repeats) {
@@ -516,20 +412,18 @@ function createBotSessionFactory(options = {}) {
     function prunePacketBreakTracking(now = Date.now(), options = {}) {
       const result = packetBreakTracker.prune(now, {
         packetTtl: Number(options.packetTtl) || Math.max(50, PACKET_BREAK_CONFIRM_WINDOW_MS * 2),
-        countTtl: Math.max(1000, BLOCK_COUNT_DEDUPE_MS * 20),
-        miningControllerStalePendingMs: MINING_CONTROLLER_STALE_PENDING_MS
+        countTtl: Math.max(1000, BLOCK_COUNT_DEDUPE_MS * 20)
       })
 
-      if (result.stalePackets > 0 || result.controllerStale > 0) {
+      if (result.stalePackets > 0) {
         diagEvent('packet-break-stale-pending-cleared', {
           stalePending: result.stalePackets,
-          controllerStale: result.controllerStale,
           packetTtl: result.packetTtl,
           pendingBreaks: result.pendingBreaks
         })
       }
 
-      return result.stalePackets + result.controllerStale
+      return result.stalePackets
     }
 
     function markPacketBreakAttempt(position) {
@@ -564,16 +458,7 @@ function createBotSessionFactory(options = {}) {
           return false
         }
 
-        if (source === 'packet') {
-          recordBreakPacketConfirmed(miningController, { positionKey: key, now })
-        }
         packetBreakTracker.deletePendingKey(key)
-      }
-
-      if (source === 'dig') {
-        recordFallbackDig(miningController, { now })
-      } else if (source === 'packet') {
-        resetMiningControllerRecovery(miningController)
       }
 
       lastDigTime = now
@@ -581,7 +466,6 @@ function createBotSessionFactory(options = {}) {
       lastEmptyTargetsLogAt = 0
       packetOnlyStartedAt = PACKET_ONLY_MINING ? now : 0
       refreshActiveStandPositionFromMining(source)
-      recordSpeedGuardProgress(speedGuardProfile, now)
 
       if (!positionConfirmed) {
         positionConfirmed = true
@@ -618,7 +502,7 @@ function createBotSessionFactory(options = {}) {
 
       const now = Date.now()
       const staleCleared = prunePacketBreakTracking(now, {
-        packetTtl: Math.min(PACKET_BREAK_CONFIRM_WINDOW_MS, MINING_CONTROLLER_STALE_PENDING_MS)
+        packetTtl: PACKET_BREAK_CONFIRM_WINDOW_MS
       })
       packetBreakTracker.clearTargetCooldowns()
       await ensureMiningLookAt(true)
@@ -628,21 +512,12 @@ function createBotSessionFactory(options = {}) {
         expectedSessionEpoch,
         Math.min(BURST_BREAK_WINDOW_MS, 350)
       )
-      recordPacketOnlySoftRecovery(miningController, {
-        now,
-        reason,
-        staleCleared,
-        burstPackets
-      })
-      evaluateAdaptiveMiningController(reason, { force: true, now: Date.now() })
-
       if (burstPackets > 0) {
         packetOnlyStartedAt = Date.now()
         diagEvent('packet-only-soft-recovery', {
           reason,
           burstPackets,
-          staleCleared,
-          snapshot: getMiningControllerSnapshot(miningController)
+          staleCleared
         })
         return true
       }
@@ -652,541 +527,6 @@ function createBotSessionFactory(options = {}) {
 
     function hasRecentMiningProgress(windowMs = POSITION_FAR_RECONNECT_IDLE_MS) {
       return getMiningProgressAgeMs() <= windowMs
-    }
-
-    function getCurrentRatePerMinute() {
-      refreshBotRates()
-      const botData = monitorData.bots[username]
-      if (!botData) return 0
-
-      const stats = computeSmartRateStats({
-        blockTimes: botData.blockTimes,
-        now: Date.now(),
-        rawWindowMs: getSpeedGuardRateWindowMs(),
-        speedWindowMs: getSpeedGuardRateWindowMs(),
-        status: botData.status,
-        activeSince: botData.rateActiveSince || 0
-      })
-      return Number.isFinite(stats.effectiveRatePerMinute) ? stats.effectiveRatePerMinute : 0
-    }
-
-    function getMiningBottleneckHealthReason(bottleneck = '') {
-      const normalized = String(bottleneck || '').toLowerCase()
-      if (normalized.includes('confirmation') || normalized.includes('pending'))
-        return 'mining-confirmation'
-      if (normalized.includes('packet-budget') || normalized.includes('too many'))
-        return 'packet-budget'
-      if (normalized.includes('fallback')) return 'fallback-dig'
-      return 'speed-drop'
-    }
-
-    function evaluateAdaptiveMiningController(source = 'mining-loop', options = {}) {
-      const now = Number(options.now) || Date.now()
-      const result = evaluateMiningController(miningController, {
-        now,
-        force: options.force === true
-      })
-      const snapshot = result.snapshot || getMiningControllerSnapshot(miningController, now)
-      const decisionSnapshot = result.decisionSnapshot || snapshot
-
-      if (result.changed) {
-        diagEvent('adaptive-mining-controller', {
-          source,
-          changed: result.changed,
-          previousScale: result.previousScale,
-          nextScale: result.nextScale,
-          bottleneck: result.bottleneck,
-          snapshot: decisionSnapshot
-        })
-      }
-
-      const bottleneck = result.bottleneck || decisionSnapshot.lastMiningBottleneck
-      if (
-        result.changed &&
-        bottleneck &&
-        !['stable', 'learning'].includes(bottleneck) &&
-        now - lastMiningControllerLogAt >= 30000
-      ) {
-        lastMiningControllerLogAt = now
-        const healthReason = getMiningBottleneckHealthReason(bottleneck)
-        const budgetPercent = Math.round((decisionSnapshot.budgetScale || 1) * 100)
-        const confirmationPercent = Math.round((decisionSnapshot.confirmationRatio || 0) * 100)
-        const staleCleared =
-          decisionSnapshot.window?.stalePendingCleared || decisionSnapshot.stalePendingCleared || 0
-        const pendingCount = decisionSnapshot.pendingCount || 0
-        const extra =
-          staleCleared > 0 || pendingCount > 0
-            ? `, pending ${pendingCount}, stale ${staleCleared}`
-            : ''
-        setRuntimeHealth(healthReason, {
-          lastRecoveryAction: 'adaptive mining controller',
-          diagnosis: `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%${extra}.`
-        })
-        addLog(
-          'warning',
-          username,
-          `Mining controller: ${bottleneck}, подтверждения ${confirmationPercent}%, budget ${budgetPercent}%${extra}`
-        )
-      }
-
-      return decisionSnapshot
-    }
-
-    function requestSoftMiningRestart(reason = 'speed-guard') {
-      if (
-        !digLoopRunning ||
-        miningLoopSoftRestartRequested ||
-        !isMiningSessionReady(sessionEpoch)
-      ) {
-        return false
-      }
-
-      miningLoopSoftRestartRequested = true
-      packetOnlyStartedAt = 0
-      packetBreakTracker.clearPending()
-      packetBreakTracker.clearTargetCooldowns()
-      resetMiningControllerRecovery(miningController)
-      resetSpeedGuardGrace('soft-mining-restart', {
-        graceMs: Math.min(10000, SPEED_GUARD_START_GRACE_MS),
-        preserveRecoveries: true,
-        preserveCooldown: true
-      })
-      setRuntimeHealth('speed-drop', {
-        lastRecoveryAction: 'soft mining restart',
-        diagnosis: 'Speed-guard перезапускает mining loop без полного reconnect.'
-      })
-      addLog('warning', username, `Speed-guard: soft restart mining loop (${reason})`)
-      return true
-    }
-
-    function getSpeedGuardPeak() {
-      return Math.max(0, Number(speedGuardProfile.peakRatePerMinute) || 0)
-    }
-
-    function rememberSpeedGuardPeak(ratePerMinute) {
-      return rememberAdaptiveSpeedGuardPeak(
-        speedGuardProfile,
-        ratePerMinute,
-        Date.now(),
-        getSpeedGuardRateMemoryMs(),
-        {
-          stickyPeakMemoryMs: SPEED_GUARD_PEAK_MEMORY_MS
-        }
-      )
-    }
-
-    function getSpeedGuardTarget() {
-      return getSpeedGuardTargetRate(speedGuardProfile, SPEED_GUARD_TARGET_RATIO)
-    }
-
-    function getSpeedGuardRecoveryTriggerRate(targetRate) {
-      const target = Math.max(0, Number(targetRate) || 0)
-      if (target <= 0) return 0
-
-      const ratioTrigger = target * SPEED_GUARD_RECOVERY_TOLERANCE_RATIO
-      const gapTrigger =
-        SPEED_GUARD_RECOVERY_MIN_GAP_BPM > 0 && target > SPEED_GUARD_RECOVERY_MIN_GAP_BPM
-          ? target - SPEED_GUARD_RECOVERY_MIN_GAP_BPM
-          : ratioTrigger
-      return Math.max(0, Math.min(ratioTrigger, gapTrigger))
-    }
-
-    function getSpeedGuardRateWindowMs() {
-      return getAdaptiveRateWindowMs(speedGuardProfile, SPEED_GUARD_RATE_WINDOW_MS)
-    }
-
-    function getSpeedGuardRateMemoryMs() {
-      return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_RATE_WINDOW_MS * 4, 12)
-    }
-
-    function getSpeedGuardLowRateMs() {
-      return Math.max(
-        getSpeedGuardRateWindowMs(),
-        getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_LOW_RATE_MS, 2)
-      )
-    }
-
-    function getSpeedGuardButtonIdleMs() {
-      return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_BUTTON_IDLE_MS, 2)
-    }
-
-    function getSpeedGuardNoProgressReconnectMs() {
-      return getAdaptiveWaitMs(speedGuardProfile, SPEED_GUARD_NO_PROGRESS_RECONNECT_MS, 4)
-    }
-
-    function resetSpeedGuardLowState() {
-      speedGuardLowSince = 0
-      speedGuardRecoveries = 0
-    }
-
-    function stopSpeedGuard() {
-      try {
-        if (speedGuardTimer) clearInterval(speedGuardTimer)
-      } catch (error) {}
-      speedGuardTimer = null
-      speedGuardCheckRunning = false
-      speedGuardStartedAt = 0
-      speedGuardLowSince = 0
-      speedGuardRecoveries = 0
-    }
-
-    function resetSpeedGuardGrace(reason = 'external-hold', options = {}) {
-      const graceMs = Math.max(0, Number(options.graceMs ?? SPEED_GUARD_START_GRACE_MS) || 0)
-      speedGuardStartedAt = Date.now() - Math.max(0, SPEED_GUARD_START_GRACE_MS - graceMs)
-      speedGuardLowSince = 0
-      if (options.preserveRecoveries !== true) {
-        speedGuardRecoveries = 0
-      }
-      if (options.preserveCooldown !== true) {
-        speedGuardLastRecoveryAt = 0
-      }
-      speedGuardCheckRunning = false
-      diagEvent('speed-guard-grace-reset', {
-        reason,
-        startGraceMs: SPEED_GUARD_START_GRACE_MS,
-        effectiveGraceMs: graceMs,
-        preserveRecoveries: options.preserveRecoveries === true
-      })
-    }
-
-    async function recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot) {
-      const now = Date.now()
-      const buttonIdleMs = getSpeedGuardButtonIdleMs()
-      const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
-
-      const idleFor = getMiningProgressAgeMs(now)
-      const emptyTargets =
-        snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'empty')
-      const unloadedTargets =
-        snapshot?.all?.length > 0 && snapshot.all.every(target => target.state === 'unloaded')
-      const activeProgress =
-        Number.isFinite(idleFor) && idleFor < Math.min(buttonIdleMs, noProgressReconnectMs)
-      const recoveryTriggerRate = getSpeedGuardRecoveryTriggerRate(targetRate)
-      const speedDropExceeded = recoveryTriggerRate > 0 && currentRate < recoveryTriggerRate
-      const sustainedLowMs = speedGuardLowSince > 0 ? Math.max(0, now - speedGuardLowSince) : 0
-      if (
-        activeProgress &&
-        !emptyTargets &&
-        !unloadedTargets &&
-        digLoopRunning &&
-        !speedDropExceeded
-      ) {
-        diagEvent('speed-guard-active-progress-hold', {
-          currentRate,
-          targetRate,
-          allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
-          idleFor,
-          targets: snapshot?.all?.map(formatTargetSnapshot)
-        })
-        return
-      }
-
-      if (now - speedGuardLastRecoveryAt < SPEED_GUARD_RECOVERY_COOLDOWN_MS) return
-
-      speedGuardLastRecoveryAt = now
-      speedGuardRecoveries += 1
-      const recoveryAttempt = Math.min(speedGuardRecoveries, SPEED_GUARD_RECONNECT_AFTER_RECOVERIES)
-      const shouldReconnectForSpeedDrop = shouldEscalateSpeedDrop({
-        currentRate,
-        targetRate,
-        recoveries: speedGuardRecoveries,
-        reconnectAfterRecoveries: SPEED_GUARD_RECONNECT_AFTER_RECOVERIES,
-        sustainedLowMs,
-        sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
-        idleFor,
-        noProgressReconnectMs,
-        severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO
-      })
-      const rateText = `${Math.round(currentRate)}<${Math.round(targetRate)} б/м`
-      const shouldLogRecoveryWarning =
-        emptyTargets ||
-        unloadedTargets ||
-        !digLoopRunning ||
-        speedDropExceeded ||
-        (Number.isFinite(idleFor) && idleFor >= 3000)
-
-      if (shouldLogRecoveryWarning) {
-        setRuntimeHealth('speed-drop', {
-          lastRecoveryAction: 'speed-guard recovery',
-          diagnosis: `Причина просадки: скорость ${Math.round(currentRate)} б/м ниже адаптивной цели ${Math.round(targetRate)} б/м.`
-        })
-        addLog(
-          'warning',
-          username,
-          `Speed-guard: просадка ${rateText}, простой ${Number.isFinite(idleFor) ? Math.round(idleFor / 1000) : '?'}с -> восстановление ${recoveryAttempt}/${SPEED_GUARD_RECONNECT_AFTER_RECOVERIES}`
-        )
-      }
-
-      diagEvent('speed-guard-recovery', {
-        currentRate,
-        targetRate,
-        recoveryTriggerRate,
-        peakRate: getSpeedGuardPeak(),
-        idleFor,
-        buttonIdleMs,
-        noProgressReconnectMs,
-        activeProgress,
-        speedDropExceeded,
-        allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
-        recoveries: speedGuardRecoveries,
-        sustainedLowMs,
-        sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
-        severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO,
-        shouldReconnectForSpeedDrop,
-        emptyTargets,
-        unloadedTargets,
-        targets: snapshot?.all?.map(formatTargetSnapshot)
-      })
-
-      if (unloadedTargets && Number.isFinite(idleFor) && idleFor >= buttonIdleMs) {
-        const confirmed = await confirmFarCoordinateState(
-          expectedSessionEpoch,
-          'speed-guard-unloaded'
-        )
-        if (confirmed.confirmed) {
-          reconnectBecauseCoordinateFar(confirmed.health, 'speed-guard-unloaded')
-          return
-        }
-      }
-
-      if (
-        entryButtonPosition &&
-        emptyTargets &&
-        Number.isFinite(idleFor) &&
-        idleFor >= buttonIdleMs &&
-        !entryButtonFlowRunning
-      ) {
-        addLog('warning', username, 'Speed-guard: шахта пустая, повторяю кнопку генератора')
-        await pressEntryButton({ waitAfter: false })
-        if (!isMiningSessionReady(expectedSessionEpoch)) return
-        await runBurstBreakWindow(expectedSessionEpoch, Math.min(BURST_BREAK_WINDOW_MS, 900))
-        return
-      }
-
-      prunePacketBreakTracking(now, {
-        packetTtl: Math.min(PACKET_BREAK_CONFIRM_WINDOW_MS, MINING_CONTROLLER_STALE_PENDING_MS)
-      })
-      const controllerSnapshot = evaluateAdaptiveMiningController('speed-guard', {
-        force: true,
-        now
-      })
-      const confirmationAttempts = Number(controllerSnapshot.window?.sentBreakAttempts) || 0
-      const confirmationRatio = Number(controllerSnapshot.confirmationRatio)
-      const packetConfirmationBad =
-        confirmationAttempts >= 8 &&
-        Number.isFinite(confirmationRatio) &&
-        confirmationRatio < MINING_CONTROLLER_BAD_CONFIRMATION_RATIO
-
-      if (speedDropExceeded && packetConfirmationBad && !isPacketSafetyModeActive()) {
-        activatePacketSafetyMode('proactive-low-confirmation')
-        resetSpeedGuardGrace('packet-safe-low-confirmation', {
-          graceMs: Math.min(30000, SPEED_GUARD_START_GRACE_MS)
-        })
-        return
-      }
-
-      if (!digLoopRunning && isEntryButtonPressedForCurrentJoin()) {
-        addLog('warning', username, 'Speed-guard: mining loop не активен, запускаю заново')
-        startDiggingLoop(expectedSessionEpoch).catch(() => {})
-        return
-      }
-
-      if (speedGuardRecoveries === 1) {
-        const recovered = await recoverPacketOnlyPipeline(
-          expectedSessionEpoch,
-          'speed-guard-rescan'
-        )
-        if (recovered && !shouldReconnectForSpeedDrop) {
-          return
-        }
-      }
-
-      if (
-        speedGuardRecoveries >= SPEED_GUARD_SOFT_RESTART_AFTER_RECOVERIES &&
-        speedGuardRecoveries < SPEED_GUARD_RECONNECT_AFTER_RECOVERIES &&
-        !shouldReconnectForSpeedDrop
-      ) {
-        if (requestSoftMiningRestart('speed-drop')) {
-          return
-        }
-      }
-
-      await ensureMiningLookAt(true)
-      if (!isMiningSessionReady(expectedSessionEpoch)) return
-
-      const burstPackets = await runBurstBreakWindow(
-        expectedSessionEpoch,
-        Math.min(BURST_BREAK_WINDOW_MS, 900)
-      )
-      if (burstPackets > 0 && !shouldReconnectForSpeedDrop) {
-        diagEvent('speed-guard-soft-recovery-burst', {
-          burstPackets,
-          currentRate,
-          targetRate,
-          recoveries: speedGuardRecoveries,
-          sustainedLowMs
-        })
-        return
-      }
-
-      if (
-        Number.isFinite(idleFor) &&
-        idleFor < noProgressReconnectMs &&
-        !shouldReconnectForSpeedDrop
-      ) {
-        diagEvent('speed-guard-reconnect-skipped-active-progress', {
-          currentRate,
-          targetRate,
-          idleFor,
-          noProgressReconnectMs,
-          recoveries: speedGuardRecoveries
-        })
-        return
-      }
-
-      if (
-        shouldReconnectForSpeedDrop ||
-        speedGuardRecoveries >= SPEED_GUARD_RECONNECT_AFTER_RECOVERIES ||
-        (Number.isFinite(idleFor) && idleFor >= noProgressReconnectMs)
-      ) {
-        addLog(
-          'warning',
-          username,
-          `Speed-guard: мягкое восстановление не помогло (${Math.round(sustainedLowMs / 1000)}с ниже цели) -> быстрый перезаход`
-        )
-        updateBotStatus(username, 'ожидание')
-        scheduleReconnectLocal(2000, true, 'speed-guard-low-rate')
-      }
-    }
-
-    async function runSpeedGuardCheck(expectedSessionEpoch) {
-      if (
-        !SPEED_GUARD_ENABLED ||
-        speedGuardCheckRunning ||
-        isDiggingPaused() ||
-        isReturningToPosition ||
-        !isCurrentSession(expectedSessionEpoch) ||
-        !joinedSubserver ||
-        !bot ||
-        hasReconnectPendingLocal()
-      ) {
-        return
-      }
-
-      speedGuardCheckRunning = true
-      try {
-        if (!isEntryButtonPressedForCurrentJoin()) {
-          if (!entryButtonFlowRunning) {
-            addLog('warning', username, 'Speed-guard: post-join кнопка не подтверждена, повторяю')
-            await runEntryButtonFlow(expectedSessionEpoch, 'speed-guard')
-          }
-          return
-        }
-
-        if (!digLoopRunning) {
-          addLog('warning', username, 'Speed-guard: mining loop остановлен, запускаю')
-          startDiggingLoop(expectedSessionEpoch).catch(() => {})
-          return
-        }
-
-        const now = Date.now()
-        if (speedGuardStartedAt && now - speedGuardStartedAt < SPEED_GUARD_START_GRACE_MS) {
-          return
-        }
-
-        const currentRate = getCurrentRatePerMinute()
-        const peakRate = rememberSpeedGuardPeak(currentRate)
-        const targetRate = getSpeedGuardTarget()
-        const recoveryTriggerRate = getSpeedGuardRecoveryTriggerRate(targetRate)
-        const progressAge = getMiningProgressAgeMs(now)
-        const rateWindowMs = getSpeedGuardRateWindowMs()
-        const rateMemoryMs = getSpeedGuardRateMemoryMs()
-        const lowRateMs = getSpeedGuardLowRateMs()
-        const noProgressReconnectMs = getSpeedGuardNoProgressReconnectMs()
-        const miningControllerSnapshot = getMiningControllerSnapshot(miningController, now)
-        const confirmationAttempts = Number(miningControllerSnapshot.window?.sentBreakAttempts) || 0
-        const confirmationRatio = Number(miningControllerSnapshot.confirmationRatio)
-        const lowConfirmationPipeline =
-          targetRate > 0 &&
-          currentRate < recoveryTriggerRate &&
-          confirmationAttempts >= 8 &&
-          Number.isFinite(confirmationRatio) &&
-          confirmationRatio < MINING_CONTROLLER_BAD_CONFIRMATION_RATIO
-
-        const hasFreshProgress =
-          Number.isFinite(progressAge) && progressAge <= Math.max(rateWindowMs, lowRateMs)
-        const isLearningBaseline = targetRate <= 0
-        const isHealthyRate = targetRate > 0 && currentRate >= targetRate
-        const isWithinRecoveryBand = recoveryTriggerRate > 0 && currentRate >= recoveryTriggerRate
-        if (isHealthyRate || isWithinRecoveryBand || (isLearningBaseline && hasFreshProgress)) {
-          if (monitorData.health?.reason === 'speed-drop') {
-            setRuntimeHealth('mining-ok', { lastRecoveryAction: 'speed restored' })
-          }
-          resetSpeedGuardLowState()
-          return
-        }
-
-        if (!speedGuardLowSince) {
-          speedGuardLowSince = now
-          diagEvent('speed-guard-low-rate-start', {
-            currentRate,
-            targetRate,
-            peakRate,
-            recoveryTriggerRate,
-            progressAge,
-            rateWindowMs,
-            rateMemoryMs,
-            lowRateMs,
-            noProgressReconnectMs,
-            confirmationAttempts,
-            confirmationRatio,
-            lowConfirmationPipeline
-          })
-          if (!lowConfirmationPipeline) {
-            return
-          }
-        }
-
-        if (
-          !lowConfirmationPipeline &&
-          now - speedGuardLowSince < lowRateMs &&
-          progressAge < noProgressReconnectMs
-        ) {
-          return
-        }
-
-        const snapshot = buildMiningSnapshot(0)
-        await recoverSpeedDrop(expectedSessionEpoch, currentRate, targetRate, snapshot)
-      } finally {
-        speedGuardCheckRunning = false
-      }
-    }
-
-    function startSpeedGuard(expectedSessionEpoch) {
-      if (!SPEED_GUARD_ENABLED || speedGuardTimer) return
-      speedGuardStartedAt = Date.now()
-      speedGuardLowSince = 0
-      speedGuardRecoveries = 0
-      speedGuardLastRecoveryAt = 0
-      speedGuardTimer = setInterval(() => {
-        runSpeedGuardCheck(expectedSessionEpoch).catch(error => {
-          diagEvent('speed-guard-error', { error })
-        })
-      }, SPEED_GUARD_INTERVAL_MS)
-      diagEvent('speed-guard-started', {
-        adaptive: true,
-        intervalMs: SPEED_GUARD_INTERVAL_MS,
-        startGraceMs: SPEED_GUARD_START_GRACE_MS,
-        rateWindowMs: getSpeedGuardRateWindowMs(),
-        rateMemoryMs: getSpeedGuardRateMemoryMs(),
-        lowRateMs: getSpeedGuardLowRateMs(),
-        noProgressReconnectMs: getSpeedGuardNoProgressReconnectMs(),
-        targetRatio: SPEED_GUARD_TARGET_RATIO,
-        allowedDropPercent: SPEED_GUARD_ALLOWED_DROP_PERCENT,
-        sustainedDropReconnectMs: SPEED_GUARD_SUSTAINED_DROP_RECONNECT_MS,
-        severeDropRatio: SPEED_GUARD_SEVERE_DROP_RATIO,
-        peakRate: getSpeedGuardPeak()
-      })
     }
 
     function setMenuStage(stage, source = 'unknown') {
@@ -1356,6 +696,76 @@ function createBotSessionFactory(options = {}) {
       await lookAtMiningTargets()
     }
 
+    function isDurableItem(item) {
+      return item && item.maxDurability != null && item.maxDurability > 0
+    }
+
+    function getItemDurabilityPercent(item) {
+      if (!isDurableItem(item)) return null
+      const remaining = item.maxDurability - item.durabilityUsed
+      return (remaining / item.maxDurability) * 100
+    }
+
+    function switchToNextTool() {
+      if (!TOOL_SWITCH_SLOTS.length || !bot) return false
+
+      const currentSlot = bot.quickBarSlot
+      const slots = TOOL_SWITCH_SLOTS
+
+      for (let i = 0; i < slots.length; i++) {
+        toolSwitchCursor = (toolSwitchCursor + 1) % slots.length
+        const slot = slots[toolSwitchCursor]
+        if (slot === currentSlot) continue
+
+        const item = bot.inventory.slots[36 + slot]
+        if (item && isDurableItem(item) && getItemDurabilityPercent(item) > TOOL_SWITCH_THRESHOLD) {
+          try {
+            bot.setQuickBarSlot(slot)
+            bot._client.write('held_item_slot', { slotId: slot })
+          } catch (e) {}
+          return true
+        }
+      }
+
+      for (const slot of slots) {
+        if (slot === currentSlot) continue
+        const item = bot.inventory.slots[36 + slot]
+        if (item && isDurableItem(item)) {
+          try {
+            bot.setQuickBarSlot(slot)
+            bot._client.write('held_item_slot', { slotId: slot })
+          } catch (e) {}
+          return true
+        }
+      }
+
+      return false
+    }
+
+    function checkAndSwitchTool() {
+      if (!TOOL_SWITCH_SLOTS.length || TOOL_SWITCH_THRESHOLD <= 0 || !bot) return false
+
+      const now = Date.now()
+      if (now - lastToolSwitchCheckAt < 1000) return false
+      lastToolSwitchCheckAt = now
+
+      const item = bot.heldItem
+      if (!item) {
+        return switchToNextTool()
+      }
+
+      if (!isDurableItem(item)) return false
+
+      const durability = getItemDurabilityPercent(item)
+      if (durability === null) return false
+
+      if (durability <= TOOL_SWITCH_THRESHOLD) {
+        return switchToNextTool()
+      }
+
+      return false
+    }
+
     function sendBreakPacketToTarget(target, options = {}) {
       if (!isFastMiningAllowed() || !bot?._client || !target?.position) {
         return false
@@ -1408,12 +818,7 @@ function createBotSessionFactory(options = {}) {
         }
         markBreakPacketTargetSent(location)
         markPacketBreakAttempt(location)
-        recordBreakPacketsSent(miningController, {
-          positionKey: getPositionKey(location),
-          packetCount: sentPairs * 2,
-          attempts: 1,
-          now: Date.now()
-        })
+
         return true
       } catch (error) {
         return false
@@ -1832,7 +1237,6 @@ function createBotSessionFactory(options = {}) {
         reconnectScheduled,
         reconnectDueInMs: reconnectDueAt ? Math.max(0, reconnectDueAt - Date.now()) : 0,
         hasReconnectPending: hasReconnectPendingLocal(),
-        packetSafetyRemainingMs: getPacketSafetyRemaining(),
         miningProgressAgeMs: getMiningProgressAgeMs(),
         menuStage,
         currentWindow: bot?.currentWindow
@@ -2320,12 +1724,6 @@ function createBotSessionFactory(options = {}) {
       lastMenuOpenAttemptAt = 0
       lastMenuAttempt = 0
       menuFlowQueued = false
-      speedGuardStartedAt = 0
-      speedGuardLowSince = 0
-      speedGuardRecoveries = 0
-      speedGuardCheckRunning = false
-      lastMiningControllerLogAt = 0
-      miningLoopSoftRestartRequested = false
       setMenuStage('idle', 'reset-session')
       packetOnlyStartedAt = 0
       packetBreakTracker.clear()
@@ -2386,9 +1784,6 @@ function createBotSessionFactory(options = {}) {
         if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer)
       } catch (e) {}
       try {
-        if (speedGuardTimer) clearInterval(speedGuardTimer)
-      } catch (e) {}
-      try {
         restoreLimboPhysics(source)
       } catch (e) {}
 
@@ -2405,7 +1800,6 @@ function createBotSessionFactory(options = {}) {
       entryButtonWatchdogTimer = null
       menuFlowWakeTimer = null
       postLimboMenuWatchdogTimer = null
-      speedGuardTimer = null
       menuFlowWakeDueAt = 0
       menuFlowRunning = false
       menuFlowQueued = false
@@ -2464,9 +1858,6 @@ function createBotSessionFactory(options = {}) {
         if (postLimboMenuWatchdogTimer) clearTimeout(postLimboMenuWatchdogTimer)
       } catch (e) {}
       try {
-        if (speedGuardTimer) clearInterval(speedGuardTimer)
-      } catch (e) {}
-      try {
         restoreLimboPhysics('cleanup')
       } catch (e) {}
       menuTimer = null
@@ -2485,7 +1876,6 @@ function createBotSessionFactory(options = {}) {
       recreateRetryTimer = null
       menuFlowWakeTimer = null
       postLimboMenuWatchdogTimer = null
-      speedGuardTimer = null
       menuFlowWakeDueAt = 0
       menuFlowRunning = false
       menuFlowQueued = false
@@ -3558,10 +2948,6 @@ function createBotSessionFactory(options = {}) {
         waitKickCount = decision.nextWaitKickCount
       }
 
-      if (decision.packetSafetySource) {
-        activatePacketSafetyMode(decision.packetSafetySource)
-      }
-
       if (decision.stabilityCooldownReason) {
         activateStabilityCooldown(
           decision.stabilityCooldownReason,
@@ -3693,7 +3079,6 @@ function createBotSessionFactory(options = {}) {
       updateBotStatus(username, 'ожидание')
 
       if (hasReconnectPendingLocal()) {
-        if (decision.packetSafetySource) activatePacketSafetyMode(decision.packetSafetySource)
         if (String(reconnectReason || '').startsWith('mid-session-')) {
           diagEvent('too-many-packets-reschedule-mid-session', {
             source,
@@ -4948,7 +4333,6 @@ function createBotSessionFactory(options = {}) {
           `Запускаю новый движок добычи (${miningTargets.length} точек, пачка ${MINING_BATCH_SIZE})`
         )
         setLifecycleState('mining', 'mining-loop-started')
-        startSpeedGuard(expectedSessionEpoch)
         diagEvent('mining-loop-started', {
           targets: miningTargets.length,
           batchSize: MINING_BATCH_SIZE,
@@ -4962,11 +4346,6 @@ function createBotSessionFactory(options = {}) {
         let lastHealthCheckAt = readyAt
 
         while (isMiningSessionReady(expectedSessionEpoch)) {
-          if (miningLoopSoftRestartRequested) {
-            diagEvent('mining-loop-soft-restart-break', { expectedSessionEpoch })
-            return
-          }
-
           if (isDiggingPaused()) {
             lastDigTime = Date.now()
             await sleep(500)
@@ -4978,12 +4357,13 @@ function createBotSessionFactory(options = {}) {
             continue
           }
 
+          checkAndSwitchTool()
+
           const now = Date.now()
           if (now - lastHealthCheckAt >= 5000) {
             lastHealthCheckAt = now
             diagPositionSnapshot('mining-loop')
             prunePacketBreakTracking(now)
-            evaluateAdaptiveMiningController('mining-loop', { now })
 
             if (RESTART_IF_IDLE_MS > 0 && now - lastDigTime > RESTART_IF_IDLE_MS) {
               addLog('warning', username, 'Долгий простой -> перезапуск')
@@ -5043,34 +4423,25 @@ function createBotSessionFactory(options = {}) {
                 }
 
                 const packetOnlyIdleMs = getPacketOnlyIdleMs(packetNow)
-                const recoveryDecision = getPacketOnlyRecoveryDecision(miningController, {
-                  now: packetNow,
-                  idleMs: packetOnlyIdleMs,
-                  fallbackMs: PACKET_ONLY_FALLBACK_MS
-                })
 
-                if (recoveryDecision.action === 'wait') {
+                if (packetOnlyIdleMs < PACKET_ONLY_FALLBACK_MS) {
                   continue
                 }
 
-                if (recoveryDecision.action === 'soft-recovery') {
-                  const recovered = await recoverPacketOnlyPipeline(
-                    expectedSessionEpoch,
-                    recoveryDecision.reason
-                  )
-                  if (recovered) {
-                    cursor = (cursor + 1) % miningTargets.length
-                    continue
-                  }
+                const recovered = await recoverPacketOnlyPipeline(
+                  expectedSessionEpoch,
+                  'packet-only-idle'
+                )
+                if (recovered) {
+                  cursor = (cursor + 1) % miningTargets.length
+                  continue
                 }
 
                 packetOnlyStartedAt = packetNow
                 packetOnlyFallbackThisPass = true
                 diagEvent('packet-only-fallback-dig', {
-                  reason: recoveryDecision.reason,
-                  packetOnlyIdleMs,
-                  decision: recoveryDecision,
-                  snapshot: getMiningControllerSnapshot(miningController, packetNow)
+                  reason: 'packet-only-idle',
+                  packetOnlyIdleMs
                 })
               }
             }
@@ -5084,34 +4455,25 @@ function createBotSessionFactory(options = {}) {
           ) {
             const packetNow = Date.now()
             const packetOnlyIdleMs = getPacketOnlyIdleMs(packetNow)
-            const recoveryDecision = getPacketOnlyRecoveryDecision(miningController, {
-              now: packetNow,
-              idleMs: packetOnlyIdleMs,
-              fallbackMs: PACKET_ONLY_FALLBACK_MS
-            })
 
-            if (recoveryDecision.action === 'wait') {
+            if (packetOnlyIdleMs < PACKET_ONLY_FALLBACK_MS) {
               await sleep(MINING_LOOP_IDLE_MS)
               continue
             }
 
-            if (recoveryDecision.action === 'soft-recovery') {
-              const recovered = await recoverPacketOnlyPipeline(
-                expectedSessionEpoch,
-                recoveryDecision.reason
-              )
-              if (recovered) {
-                cursor = (cursor + 1) % miningTargets.length
-                continue
-              }
+            const recovered = await recoverPacketOnlyPipeline(
+              expectedSessionEpoch,
+              'packet-only-idle'
+            )
+            if (recovered) {
+              cursor = (cursor + 1) % miningTargets.length
+              continue
             }
 
             packetOnlyStartedAt = packetNow
             diagEvent('packet-only-fallback-dig', {
-              reason: recoveryDecision.reason,
-              packetOnlyIdleMs,
-              decision: recoveryDecision,
-              snapshot: getMiningControllerSnapshot(miningController, packetNow)
+              reason: 'packet-only-idle',
+              packetOnlyIdleMs
             })
           }
 
@@ -5184,23 +4546,7 @@ function createBotSessionFactory(options = {}) {
         diagEvent('mining-loop-error', { error })
         scheduleReconnectLocal(undefined, false, 'mining-loop-error')
       } finally {
-        const shouldSoftRestart =
-          miningLoopSoftRestartRequested &&
-          isCurrentSession(expectedSessionEpoch) &&
-          joinedSubserver &&
-          bot &&
-          !hasReconnectPendingLocal() &&
-          !isShuttingDown() &&
-          isRuntimeEnabled()
         digLoopRunning = false
-        if (shouldSoftRestart) {
-          miningLoopSoftRestartRequested = false
-          setTimeout(() => {
-            startDiggingLoop(expectedSessionEpoch).catch(() => {})
-          }, 50)
-        } else if (miningLoopSoftRestartRequested) {
-          miningLoopSoftRestartRequested = false
-        }
       }
     }
 
@@ -5222,7 +4568,6 @@ function createBotSessionFactory(options = {}) {
       get reconnectDueAt() {
         return reconnectDueAt
       },
-      resetSpeedGuardGrace,
       set isRotating(val) {
         isRotating = val
       },
