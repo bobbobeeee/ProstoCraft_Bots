@@ -96,6 +96,8 @@ function createRuntimeSettings(config, options = {}) {
     MENU_SLOT_1: menu.slot1,
     MENU_SLOT_2: menu.slot2,
     HOTBAR_SLOT: menu.hotbarSlot,
+    TOOL_SWITCH_SLOTS: Array.isArray(menu.toolSwitchSlots) ? menu.toolSwitchSlots : [],
+    TOOL_SWITCH_THRESHOLD: Math.max(1, Number(menu.toolSwitchThreshold) || 5),
     DEBUG_MODE,
     DETAILED_EVENT_LOGGING: DEBUG_MODE,
     LOG_SERVER_MESSAGES: DEBUG_MODE && logging.logServerMessages !== false,

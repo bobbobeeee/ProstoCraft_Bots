@@ -95,7 +95,9 @@
     menu: {
       slot1: 10,
       slot2: 13,
-      hotbarSlot: 0
+      hotbarSlot: 0,
+      toolSwitchSlots: [1, 2, 3, 4, 5, 6, 7, 8],
+      toolSwitchThreshold: 5
     },
     globalRestart: {
       errorThreshold: 15,

@@ -1,6 +1,6 @@
 {
   "name": "autominerv2",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Desktop launcher and config studio for ProstoCraft mining bots",
   "main": "desktop/main.js",
   "scripts": {

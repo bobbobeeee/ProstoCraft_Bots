@@ -137,6 +137,8 @@ function createBotSessionFactory(options = {}) {
     SERVER_PORT,
     STABILITY_COOLDOWN_MAX_MS,
     STABILITY_COOLDOWN_MS,
+    TOOL_SWITCH_SLOTS,
+    TOOL_SWITCH_THRESHOLD,
     TRANSIENT_BREAK_REPEATS
   } = settings
 
@@ -251,6 +253,8 @@ function createBotSessionFactory(options = {}) {
     let lastEmptyTargetsLogAt = 0
     let lastMiningLookAt = 0
     let lastReactiveBreakAt = 0
+    let lastToolSwitchCheckAt = 0
+    let toolSwitchCursor = 0
     let lastPositionDiagnosticAt = 0
     let lastMenuOpenAttemptAt = 0
     let lastLoginCommandAt = 0
@@ -690,6 +694,76 @@ function createBotSessionFactory(options = {}) {
       }
 
       await lookAtMiningTargets()
+    }
+
+    function isDurableItem(item) {
+      return item && item.maxDurability != null && item.maxDurability > 0
+    }
+
+    function getItemDurabilityPercent(item) {
+      if (!isDurableItem(item)) return null
+      const remaining = item.maxDurability - item.durabilityUsed
+      return (remaining / item.maxDurability) * 100
+    }
+
+    function switchToNextTool() {
+      if (!TOOL_SWITCH_SLOTS.length || !bot) return false
+
+      const currentSlot = bot.quickBarSlot
+      const slots = TOOL_SWITCH_SLOTS
+
+      for (let i = 0; i < slots.length; i++) {
+        toolSwitchCursor = (toolSwitchCursor + 1) % slots.length
+        const slot = slots[toolSwitchCursor]
+        if (slot === currentSlot) continue
+
+        const item = bot.inventory.slots[slot]
+        if (item && isDurableItem(item) && getItemDurabilityPercent(item) > TOOL_SWITCH_THRESHOLD) {
+          try {
+            bot.setQuickBarSlot(slot)
+            bot._client.write('held_item_slot', { slotId: slot })
+          } catch (e) {}
+          return true
+        }
+      }
+
+      for (const slot of slots) {
+        if (slot === currentSlot) continue
+        const item = bot.inventory.slots[slot]
+        if (item && isDurableItem(item)) {
+          try {
+            bot.setQuickBarSlot(slot)
+            bot._client.write('held_item_slot', { slotId: slot })
+          } catch (e) {}
+          return true
+        }
+      }
+
+      return false
+    }
+
+    function checkAndSwitchTool() {
+      if (!TOOL_SWITCH_SLOTS.length || TOOL_SWITCH_THRESHOLD <= 0 || !bot) return false
+
+      const now = Date.now()
+      if (now - lastToolSwitchCheckAt < 1000) return false
+      lastToolSwitchCheckAt = now
+
+      const item = bot.heldItem
+      if (!item) {
+        return switchToNextTool()
+      }
+
+      if (!isDurableItem(item)) return false
+
+      const durability = getItemDurabilityPercent(item)
+      if (durability === null) return false
+
+      if (durability <= TOOL_SWITCH_THRESHOLD) {
+        return switchToNextTool()
+      }
+
+      return false
     }
 
     function sendBreakPacketToTarget(target, options = {}) {
@@ -4282,6 +4356,8 @@ function createBotSessionFactory(options = {}) {
             await sleep(250)
             continue
           }
+
+          checkAndSwitchTool()
 
           const now = Date.now()
           if (now - lastHealthCheckAt >= 5000) {
