@@ -1,19 +1,14 @@
-# ProstoCraft Bot Studio 3.0.1
+# ProstoCraft Bot Studio 3.0.2
 
-Версия `3.0.1` закрепляет большой внутренний рефакторинг без изменения формата `config.json`, UI и пользовательского поведения.
+Версия 3.0.2 — исправление бага в механизме обновлений (Update Center).
 
-## Что нового
+## Исправлено
 
-- Добавлены ESLint, Prettier, CI-проверки и JSDoc/checkJs typecheck для релизных модулей.
-- Конфигурация вынесена в единую runtime-схему с сохранением legacy fallback/clamp поведения.
-- `bot.js` сокращён до оркестратора, а runtime-логика разнесена по модулям `runtime-core/`.
-- Renderer разбит на модули по экранам и действиям без изменения UI и JSON-формата настроек.
-- Electron main-процесс разнесён по модулям, IPC-проверки усилены без смены публичного API.
-- Android/Cordova release tooling разделён на проверяемые модули и покрыт тестами.
-- Синхронизация Android assets и Cordova runtime обновлена под новые runtime-core модули.
+- **Update Center**: починена ошибка "SHA256 checksum is required before downloading an update". При успешном ответе от GitHub API, но отсутствии SHA256SUMS.txt в релизе, апдейтер больше не падает с этой ошибкой — теперь корректно переходит к проверке манифеста.
+- **Источник обновлений**: переключён с offline (локальный latest-release.json) на online — GitHub API (`bobbobeeee/ProstoCraft_Bots).
 
-## Что скачать
+## Ассеты
 
-- `ProstoCraft.Bot.Studio-Setup-3.0.1.exe` - обычный установщик Windows.
-- `ProstoCraft.Bot.Studio-Mobile-3.0.1.apk` - Android APK.
-- `SHA256SUMS.txt` - контрольные суммы файлов.
+- ProstoCraft.Bot.Studio-Setup-3.0.2.exe — установщик Windows.
+- ProstoCraft.Bot.Studio-Mobile-3.0.2.apk — Android APK.
+- SHA256SUMS.txt — контрольные суммы.
