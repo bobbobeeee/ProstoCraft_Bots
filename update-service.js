@@ -50,7 +50,7 @@ function compareVersions(leftVersion, rightVersion) {
 
   for (let index = 0; index < 3; index += 1) {
     if (left.parts[index] > right.parts[index]) return 1
-    if (left.parts[index] < right.parts[index) return -1
+    if (left.parts[index] < right.parts[index]) return -1
   }
 
   if (left.prerelease && !right.prerelease) return -1
@@ -64,10 +64,10 @@ function isNewerVersion(latestVersion, currentVersion) {
 
 function getPlatformAssetPattern(platform) {
   if (platform === 'android') {
-    return /^ProstoCraft\.Bot\.Studio-Mobile-+\.apk$/i
+    return /^ProstoCraft\.Bot\.Studio-Mobile-.+\.apk$/i
   }
 
-  return /^ProstoCraft\.Bot\.Studio-Setup-+\.exe$/i
+  return /^ProstoCraft\.Bot\.Studio-Setup-.+\.exe$/i
 }
 
 function getAssets(release) {
